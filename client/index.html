@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <title>+1 Backflip Obby Escape</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #0b1020;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        /* Mobile: stop the browser from hijacking drags/pinches over the canvas. */
+        overscroll-behavior: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #app {
+        position: fixed;
+        inset: 0;
+      }
+      #app canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        touch-action: none;
+      }
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        gap: 8px;
+        text-align: center;
+        color: #cbd5f5;
+        background: #0b1020;
+        font-size: 13px;
+        transition: opacity 240ms ease;
+      }
+      #boot[hidden] {
+        display: none;
+      }
+      #boot h1 {
+        font-size: 15px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #7dd3fc;
+      }
+      #boot .err {
+        color: #fca5a5;
+        max-width: 60ch;
+        white-space: pre-wrap;
+        text-align: left;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="boot">
+      <h1>+1 Backflip Obby Escape</h1>
+      <p id="boot-status">Loading&hellip;</p>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
