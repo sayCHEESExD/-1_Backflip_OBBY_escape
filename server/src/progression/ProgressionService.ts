@@ -15,6 +15,7 @@ export class ProgressionService {
     player.progression = 0;
     player.rebirths = 0;
     player.backflips = 0;
+    player.wins = 0;
   }
 
   /** Level cap for a given rebirth count. Rebirth raises the cap. */

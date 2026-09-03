@@ -5,12 +5,16 @@ import {
   PlayerAnimationState,
   SPAWN_POSITION,
   SPAWN_ROTATION_Y,
+  type ClaimTrophyMessage,
+  type HazardHitMessage,
   type MoveMessage,
   type RespawnMessage,
+  type RespawnReason,
 } from '@obby/shared';
 import { serverConfig } from '../config/serverConfig.js';
 import { BackflipService } from '../progression/BackflipService.js';
 import { ProgressionService } from '../progression/ProgressionService.js';
+import { TrophyService } from '../progression/TrophyService.js';
 import { logger } from '../util/logger.js';
 import { GorgeState } from './state/GorgeState.js';
 import { PlayerState } from './state/PlayerState.js';
@@ -32,6 +36,7 @@ export class GorgeRoom extends Room<GorgeState> {
 
   private readonly progression = new ProgressionService();
   private readonly backflips = new BackflipService();
+  private readonly trophies = new TrophyService();
 
   override onCreate(): void {
     this.state = new GorgeState();
@@ -39,6 +44,14 @@ export class GorgeRoom extends Room<GorgeState> {
 
     this.onMessage(MessageType.Move, (client, message: MoveMessage) => {
       this.handleMove(client, message);
+    });
+
+    this.onMessage(MessageType.ClaimTrophy, (client, message: ClaimTrophyMessage) => {
+      this.handleClaimTrophy(client, message);
+    });
+
+    this.onMessage(MessageType.HazardHit, (client, message: HazardHitMessage) => {
+      this.handleHazardHit(client, message);
     });
 
     this.setSimulationInterval((deltaMs) => this.update(deltaMs), serverConfig.patchRateMs);
@@ -51,6 +64,7 @@ export class GorgeRoom extends Room<GorgeState> {
     player.sessionId = client.sessionId;
     this.progression.initialise(player);
     this.backflips.initialise(player);
+    this.trophies.initialise(player);
     this.state.players.set(client.sessionId, player);
 
     logger.info(
@@ -62,6 +76,7 @@ export class GorgeRoom extends Room<GorgeState> {
   override onLeave(client: Client, consented: boolean): void {
     this.state.players.delete(client.sessionId);
     this.backflips.forget(client.sessionId);
+    this.trophies.forget(client.sessionId);
     logger.info(
       SCOPE,
       `leave sessionId=${client.sessionId} consented=${consented} players=${this.state.players.size}`,
@@ -119,6 +134,42 @@ export class GorgeRoom extends Room<GorgeState> {
     player.ready = true;
   }
 
+  /**
+   * A trophy claim is a REQUEST. TrophyService checks the platform, the run's
+   * claim history and the player's reported position before awarding anything,
+   * and the award is scoped to this session alone.
+   */
+  private handleClaimTrophy(client: Client, message: ClaimTrophyMessage): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+
+    const result = this.trophies.claim(client.sessionId, player, message?.platformIndex);
+
+    if (!result.ok) {
+      logger.warn(
+        SCOPE,
+        `claim rejected sessionId=${client.sessionId} index=${String(
+          message?.platformIndex,
+        )} reason=${result.reason}`,
+      );
+      return;
+    }
+
+    logger.info(
+      SCOPE,
+      `trophy awarded sessionId=${client.sessionId} +${result.value} wins=${player.wins}`,
+    );
+    this.respawn(client.sessionId, player, 'trophy');
+  }
+
+  /** A reported hazard only ever affects the player who reported it. */
+  private handleHazardHit(client: Client, message: HazardHitMessage): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+    if (message?.kind !== 'redline') return;
+    this.respawn(client.sessionId, player, 'redline');
+  }
+
   private update(deltaMs: number): void {
     this.state.elapsed += deltaMs / 1000;
 
@@ -130,11 +181,7 @@ export class GorgeRoom extends Room<GorgeState> {
     });
   }
 
-  private respawn(
-    sessionId: string,
-    player: PlayerState,
-    reason: RespawnMessage['reason'],
-  ): void {
+  private respawn(sessionId: string, player: PlayerState, reason: RespawnReason): void {
     player.x = SPAWN_POSITION.x;
     player.y = SPAWN_POSITION.y;
     player.z = SPAWN_POSITION.z;
@@ -144,6 +191,8 @@ export class GorgeRoom extends Room<GorgeState> {
     player.grounded = true;
     player.animation = PlayerAnimationState.Idle;
     this.backflips.reset(sessionId, player);
+    // A new run: every platform becomes collectable again.
+    this.trophies.resetRun(sessionId);
 
     const payload: RespawnMessage = {
       x: SPAWN_POSITION.x,

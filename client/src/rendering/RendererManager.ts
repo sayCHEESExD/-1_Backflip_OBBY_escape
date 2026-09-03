@@ -1,4 +1,4 @@
-import { ACESFilmicToneMapping, PCFShadowMap, SRGBColorSpace, WebGLRenderer } from 'three';
+import { NoToneMapping, PCFShadowMap, SRGBColorSpace, WebGLRenderer } from 'three';
 import { clientConfig } from '../config/clientConfig.js';
 
 /**
@@ -26,8 +26,10 @@ export class RendererManager {
       alpha: false,
     });
     this.renderer.outputColorSpace = SRGBColorSpace;
-    this.renderer.toneMapping = ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.0;
+    // The art direction is flat, saturated and toy-like. Filmic tone mapping
+    // desaturates exactly the bright greens and blues the style depends on,
+    // so colours are passed through untouched.
+    this.renderer.toneMapping = NoToneMapping;
     this.renderer.shadowMap.enabled = true;
     // PCFSoftShadowMap is deprecated as of three r185.
     this.renderer.shadowMap.type = PCFShadowMap;

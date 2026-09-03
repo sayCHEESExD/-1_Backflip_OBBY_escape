@@ -14,6 +14,7 @@ export class ProgressionStore {
     progression: 0,
     rebirths: 0,
     backflips: 0,
+    wins: 0,
   };
 
   private readonly listeners = new Set<(value: PlayerProgression) => void>();
@@ -29,13 +30,15 @@ export class ProgressionStore {
       progression: state.progression,
       rebirths: state.rebirths,
       backflips: state.backflips,
+      wins: state.wins,
     };
 
     if (
       next.level === this.snapshot.level &&
       next.progression === this.snapshot.progression &&
       next.rebirths === this.snapshot.rebirths &&
-      next.backflips === this.snapshot.backflips
+      next.backflips === this.snapshot.backflips &&
+      next.wins === this.snapshot.wins
     ) {
       return;
     }

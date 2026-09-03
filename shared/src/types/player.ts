@@ -56,6 +56,8 @@ export interface PlayerProgression {
   progression: number;
   rebirths: number;
   backflips: number;
+  /** Trophy wins collected. Awarded by the server only. */
+  wins: number;
 }
 
 /** Everything the client knows about a replicated player. */

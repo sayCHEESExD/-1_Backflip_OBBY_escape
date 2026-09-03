@@ -9,10 +9,8 @@ import {
 import { Vector3 } from 'three';
 import { createAnimationInput, type AnimationInput } from '../animation/AnimationInput.js';
 import type { InputState } from '../input/InputState.js';
+import type { GorgeCollision } from '../world/GorgeCollision.js';
 import { PlayerCharacter } from './PlayerCharacter.js';
-
-/** Ground height for the temporary test floor. Replaced by real collision later. */
-const GROUND_Y = 0;
 
 const MOVE_DIRECTION = new Vector3();
 
@@ -42,10 +40,14 @@ export class LocalPlayer {
   private backflipsRemaining = BACKFLIP.defaultCapacity;
   /** Monotonic count of flips STARTED; replicated so remotes can mirror them. */
   private flipCount = 0;
+  /** Flips performed since leaving the ground. Drives the escalating lift. */
+  private flipsThisAirtime = 0;
 
   private readonly animationInput: AnimationInput = createAnimationInput();
+  private readonly collision: GorgeCollision;
 
-  constructor() {
+  constructor(collision: GorgeCollision) {
+    this.collision = collision;
     this.character = new PlayerCharacter();
     this.syncCharacter();
   }
@@ -105,6 +107,7 @@ export class LocalPlayer {
     this.yaw = rotationY;
     this.grounded = true;
     this.backflipsRemaining = this.backflipCapacity;
+    this.flipsThisAirtime = 0;
     this.character.resetAnimation();
     this.syncCharacter();
   }
@@ -126,12 +129,18 @@ export class LocalPlayer {
     this.applyHorizontal(delta, input, cameraYaw);
     this.velocity.y -= MOVEMENT.gravity * delta;
 
+    const previousY = this.position.y;
     this.position.addScaledVector(this.velocity, delta);
-    this.resolveGround();
+
+    // Invisible boundary: the banks are scenery and can never be reached.
+    this.position.x = this.collision.clampToChannel(this.position.x);
+
+    this.resolveGround(previousY);
 
     if (!wasGrounded && this.grounded) {
       this.animationInput.landed = true;
       this.backflipsRemaining = this.backflipCapacity;
+      this.flipsThisAirtime = 0;
     }
 
     this.syncCharacter();
@@ -156,11 +165,44 @@ export class LocalPlayer {
     }
 
     if (this.backflipsRemaining > 0) {
-      // Consume one availability, start one performance. Velocity is
-      // deliberately untouched: a flip must not alter the jump arc.
+      // Consume one availability, start one performance.
       this.backflipsRemaining -= 1;
       this.flipCount += 1;
       this.animationInput.backflipRequested = true;
+      this.applyFlipImpulse();
+    }
+  }
+
+  /**
+   * Re-launch the player off a backflip.
+   *
+   * A flip is a traversal move: it replaces vertical velocity with a fresh
+   * upward impulse and adds forward speed, so chaining flips climbs higher and
+   * carries the player further down the gorge. Each successive flip in the
+   * same airborne window lifts harder than the last.
+   *
+   * This lives in the player simulation on purpose. The animator stays purely
+   * visual and must never touch velocity - see CLAUDE.md.
+   */
+  private applyFlipImpulse(): void {
+    const lift = Math.min(
+      BACKFLIP.liftBase + BACKFLIP.liftPerChain * this.flipsThisAirtime,
+      BACKFLIP.liftMax,
+    );
+    this.flipsThisAirtime += 1;
+
+    // Replace rather than add, so a flip late in a fall still pops cleanly.
+    this.velocity.y = lift;
+
+    // Forward push along the direction the character is facing.
+    this.velocity.x += Math.sin(this.yaw) * BACKFLIP.forwardImpulse;
+    this.velocity.z += Math.cos(this.yaw) * BACKFLIP.forwardImpulse;
+
+    const speed = this.horizontalSpeed;
+    if (speed > BACKFLIP.maxAirSpeed) {
+      const scale = BACKFLIP.maxAirSpeed / speed;
+      this.velocity.x *= scale;
+      this.velocity.z *= scale;
     }
   }
 
@@ -207,20 +249,30 @@ export class LocalPlayer {
     }
   }
 
-  private resolveGround(): void {
-    // Leaving the ground by ANY means - jumping, walking off an edge, being
-    // moved - must clear `grounded`, or the fall animation never plays and a
-    // second ground jump stays available in mid-air.
-    if (this.position.y > GROUND_Y) {
+  /**
+   * Land on whatever platform is under the player, or keep falling.
+   *
+   * Leaving the ground by ANY means - jumping, walking off a platform edge -
+   * must clear `grounded`, or the fall animation never plays and a second
+   * ground jump stays available in mid-air.
+   */
+  private resolveGround(previousY: number): void {
+    const surfaceY = this.collision.surfaceYAt(this.position.x, this.position.z);
+
+    // Over open gorge, still rising, or above the surface: airborne.
+    if (surfaceY === null || this.velocity.y > 0 || this.position.y > surfaceY) {
       this.grounded = false;
       return;
     }
-    // Still rising on the frame a jump was launched: not grounded yet.
-    if (this.velocity.y > 0) {
+
+    // Only land when falling onto the surface from above; a player who has
+    // already dropped past a platform must not be snapped back up onto it.
+    if (!this.collision.canLandOn(previousY, surfaceY)) {
       this.grounded = false;
       return;
     }
-    this.position.y = GROUND_Y;
+
+    this.position.y = surfaceY;
     this.velocity.y = 0;
     this.grounded = true;
   }

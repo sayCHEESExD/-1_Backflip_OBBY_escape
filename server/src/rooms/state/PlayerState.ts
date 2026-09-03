@@ -47,6 +47,8 @@ export class PlayerState extends Schema {
   @type('float32') progression = 0;
   @type('uint16') rebirths = 0;
   @type('uint32') backflips = 0;
+  /** Trophy wins. Awarded by TrophyService only - never read from a client. */
+  @type('uint32') wins = 0;
 
   /** True once the client has reported at least one transform. */
   @type('boolean') ready = false;

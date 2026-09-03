@@ -2,6 +2,8 @@ import {
   CLIENT_SEND_MS,
   MessageType,
   ROOM_NAME,
+  type ClaimTrophyMessage,
+  type HazardHitMessage,
   type MoveMessage,
   type RespawnMessage,
 } from '@obby/shared';
@@ -77,6 +79,31 @@ export class NetworkClient {
     if (now - this.lastSendAt < CLIENT_SEND_MS) return;
     this.lastSendAt = now;
     this.room.send(MessageType.Move, message);
+  }
+
+  /**
+   * Send a transform immediately, bypassing the rate limit.
+   *
+   * Used right before a trophy claim: the server validates a claim against the
+   * last transform it received, so at 20Hz the claim would otherwise overtake
+   * the position that justifies it and be rejected as out of range.
+   */
+  sendTransformNow(now: number, message: MoveMessage): void {
+    if (!this.room) return;
+    this.lastSendAt = now;
+    this.room.send(MessageType.Move, message);
+  }
+
+  /** Ask the server to award a trophy. The server decides; this never grants. */
+  claimTrophy(platformIndex: number): void {
+    const message: ClaimTrophyMessage = { platformIndex };
+    this.room?.send(MessageType.ClaimTrophy, message);
+  }
+
+  /** Report touching a hazard. Only ever affects this player. */
+  reportHazard(): void {
+    const message: HazardHitMessage = { kind: 'redline' };
+    this.room?.send(MessageType.HazardHit, message);
   }
 
   async disconnect(): Promise<void> {

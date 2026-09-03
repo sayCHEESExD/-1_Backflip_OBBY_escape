@@ -17,9 +17,33 @@ export interface BackflipConfig {
   readonly defaultCapacity: number;
   /** Hard ceiling the server will accept, regardless of progression. */
   readonly maxCapacity: number;
+
+  /**
+   * Upward velocity granted by the FIRST flip of an airborne window.
+   *
+   * A flip is a traversal move, not just an animation: it re-launches the
+   * player mid-air. Applied by the player simulation, never by the animator.
+   */
+  readonly liftBase: number;
+  /**
+   * Extra lift added by each successive flip in the same airborne window, so
+   * chaining flips climbs higher and higher.
+   */
+  readonly liftPerChain: number;
+  /** Ceiling on a single flip's lift, so a long chain cannot escape the gorge. */
+  readonly liftMax: number;
+  /** Forward speed added along the player's facing on each flip. */
+  readonly forwardImpulse: number;
+  /** Cap on horizontal speed reachable by chaining flips. */
+  readonly maxAirSpeed: number;
 }
 
 export const BACKFLIP: BackflipConfig = {
   defaultCapacity: 3,
   maxCapacity: 50,
+  liftBase: 14,
+  liftPerChain: 2.6,
+  liftMax: 24,
+  forwardImpulse: 3.2,
+  maxAirSpeed: 26,
 };

@@ -20,6 +20,7 @@ export class DebugOverlay {
   private modelLine = 'model: loading';
   private boneLine = 'bones: -';
   private animLine = 'anim: -';
+  private wins = 0;
 
   constructor(parent: HTMLElement) {
     this.element = document.createElement('div');
@@ -74,6 +75,10 @@ export class DebugOverlay {
       `flips avail: ${flipsAvailable}  in-flight: ${flipsInFlight}`;
   }
 
+  setWins(wins: number): void {
+    this.wins = wins;
+  }
+
   setPlayer(x: number, y: number, z: number, speed: number): void {
     this.position = `${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)}`;
     this.speed = speed;
@@ -85,7 +90,7 @@ export class DebugOverlay {
 
   render(): void {
     this.element.textContent = [
-      `net: ${this.status}   session: ${this.sessionId}   ghosts: ${this.remoteCount}`,
+      `net: ${this.status}   session: ${this.sessionId}   ghosts: ${this.remoteCount}   wins: ${this.wins}`,
       `pos: ${this.position}   speed: ${this.speed.toFixed(1)}   fps: ${this.fps.toFixed(0)}`,
       this.modelLine,
       this.boneLine,

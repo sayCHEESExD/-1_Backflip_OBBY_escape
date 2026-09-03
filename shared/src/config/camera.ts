@@ -17,12 +17,17 @@ export interface CameraConfig {
   readonly far: number;
 }
 
+/**
+ * Pulled back and raised for the gorge: the player needs to read the next
+ * platform gap, the trophy pad ahead and any redline strung across the route
+ * before committing to a jump.
+ */
 export const CAMERA: CameraConfig = {
-  distance: 11,
-  height: 5.5,
-  lookAtHeight: 2.2,
-  followLerp: 8,
-  fov: 60,
+  distance: 13.5,
+  height: 7,
+  lookAtHeight: 3.4,
+  followLerp: 7,
+  fov: 64,
   near: 0.1,
-  far: 1000,
+  far: 1400,
 };

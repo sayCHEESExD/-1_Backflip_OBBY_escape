@@ -21,6 +21,7 @@ export interface NetPlayerState extends PlayerMotionState {
   progression: number;
   rebirths: number;
   backflips: number;
+  wins: number;
   ready: boolean;
 }
 

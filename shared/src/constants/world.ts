@@ -29,10 +29,8 @@ export const SPAWN_POSITION: Readonly<Vec3> = { x: 0, y: 0, z: 0 };
 export const SPAWN_ROTATION_Y = 0;
 
 /**
- * Y below which a player is considered to have fallen into the blue gorge
- * floor (a death zone) and is respawned at SPAWN_POSITION.
+ * Y below which a player has fallen into the blue gorge floor (a death zone)
+ * and is respawned at SPAWN_POSITION. Sits above GORGE.pitFloorY so the fall
+ * reads as landing in the gorge rather than passing through it.
  */
-export const DEATH_PLANE_Y = -25;
-
-/** Temporary flat test floor used by the current milestone only. */
-export const TEST_FLOOR_SIZE = 120;
+export const DEATH_PLANE_Y = -9;

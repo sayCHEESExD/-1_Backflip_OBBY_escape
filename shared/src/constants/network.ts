@@ -30,6 +30,10 @@ export const MessageType = {
   Move: 'move',
   /** Server -> client: authoritative respawn instruction. */
   Respawn: 'respawn',
+  /** Client -> server: request to collect a trophy platform's reward. */
+  ClaimTrophy: 'claimTrophy',
+  /** Client -> server: report touching a hazard. */
+  HazardHit: 'hazardHit',
 } as const;
 
 export type MessageType = (typeof MessageType)[keyof typeof MessageType];

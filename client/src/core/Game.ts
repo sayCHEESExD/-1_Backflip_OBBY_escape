@@ -8,11 +8,12 @@ import { LocalPlayer } from '../player/LocalPlayer.js';
 import { playerModelLoader, type PlayerModelReport } from '../player/PlayerModelLoader.js';
 import { RemotePlayerManager } from '../player/RemotePlayerManager.js';
 import { ProgressionStore } from '../progression/ProgressionStore.js';
+import { RunController } from '../progression/RunController.js';
 import { RendererManager } from '../rendering/RendererManager.js';
 import { SceneManager } from '../rendering/SceneManager.js';
 import { DebugOverlay } from '../ui/DebugOverlay.js';
 import { logger } from '../util/logger.js';
-import { TestFloor } from '../world/TestFloor.js';
+import { GorgeWorld } from '../world/GorgeWorld.js';
 
 const SCOPE = 'Game';
 
@@ -32,6 +33,8 @@ export class Game {
   private readonly progression = new ProgressionStore();
   private readonly overlay: DebugOverlay | null;
   private readonly network: NetworkClient;
+  private readonly world = new GorgeWorld();
+  private readonly run: RunController;
 
   private localPlayer: LocalPlayer | null = null;
   private localSessionId: string | null = null;
@@ -55,19 +58,37 @@ export class Game {
       onPlayerAdded: (sessionId, player) => this.onPlayerAdded(sessionId, player),
       onPlayerChanged: (sessionId, player) => this.onPlayerChanged(sessionId, player),
       onPlayerRemoved: (sessionId) => this.remotePlayers.remove(sessionId),
-      onRespawn: (message) =>
-        this.localPlayer?.teleport(message.x, message.y, message.z, message.rotationY),
+      onRespawn: (message) => {
+        // The server's authoritative respawn. The client usually predicted it
+        // already, so applying it again is intentionally idempotent.
+        if (this.localPlayer) this.run.respawn(this.localPlayer, message.reason);
+      },
+    });
+
+    this.run = new RunController(this.world.collision, {
+      claimTrophy: (index) => {
+        // Flush the transform first so the server can see the player standing
+        // in the zone when it validates the claim.
+        if (this.localPlayer) {
+          this.network.sendTransformNow(
+            performance.now(),
+            this.buildMoveMessage(this.localPlayer),
+          );
+        }
+        this.network.claimTrophy(index);
+      },
+      reportHazard: () => this.network.reportHazard(),
     });
   }
 
   /** Load assets and build the world. Networking is started separately. */
   async initialise(): Promise<PlayerModelReport> {
-    new TestFloor().addTo(this.sceneManager.scene);
+    this.world.addTo(this.sceneManager.scene);
 
     this.modelReport = await playerModelLoader.load();
     this.overlay?.setModelReport(this.modelReport);
 
-    this.localPlayer = new LocalPlayer();
+    this.localPlayer = new LocalPlayer(this.world.collision);
     this.sceneManager.scene.add(this.localPlayer.character.root);
 
     logger.info(SCOPE, 'world ready');
@@ -92,6 +113,10 @@ export class Game {
       // Camera-relative movement: forward is away from the camera.
       player.update(delta, input, cameraYaw + Math.PI);
 
+      // Triggers are sampled after the player has moved, so a trophy pad or a
+      // redline is detected at the position actually reached this frame.
+      this.run.update(delta, player);
+
       this.camera.setTarget(player.position, player.rotationY);
       this.sendTransform(now, player);
     }
@@ -111,13 +136,18 @@ export class Game {
   dispose(): void {
     this.input.detach();
     this.remotePlayers.dispose();
+    this.world.dispose();
     void this.network.disconnect();
     this.renderer.dispose();
   }
 
   private sendTransform(now: number, player: LocalPlayer): void {
+    this.network.sendTransform(now, this.buildMoveMessage(player));
+  }
+
+  private buildMoveMessage(player: LocalPlayer): MoveMessage {
     const motion = player.motionState;
-    const message: MoveMessage = {
+    return {
       x: player.position.x,
       y: player.position.y,
       z: player.position.z,
@@ -128,7 +158,6 @@ export class Game {
       flipCount: motion.flipCount,
       animation: player.animationState,
     };
-    this.network.sendTransform(now, message);
   }
 
   private onStatusChange(status: ConnectionStatus): void {
@@ -190,6 +219,7 @@ export class Game {
         player.flipsInProgress,
         player.isGrounded,
       );
+      this.overlay.setWins(this.progression.value.wins);
     }
     this.overlay.setFps(this.fps);
     this.overlay.setRemoteCount(this.remotePlayers.count);

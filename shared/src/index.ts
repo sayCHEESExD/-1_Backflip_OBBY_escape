@@ -9,6 +9,7 @@ export * from './constants/world.js';
 export * from './config/backflip.js';
 export * from './config/movement.js';
 export * from './config/camera.js';
+export * from './config/gorge.js';
 export * from './config/progression.js';
 export * from './types/math.js';
 export * from './types/player.js';

@@ -41,7 +41,11 @@ engine. Do not add a framework or a build tool without a concrete need.
 
 - **Velocity determines jump distance.** Faster approach = longer jump. This is
   the central skill expression; do not cap it with a fixed jump arc.
-- Level progression grants **backflips**.
+- **Backflips are a traversal move.** Each flip re-launches the player in mid
+  air with an upward impulse plus forward speed, and each successive flip in
+  the same airborne window lifts HARDER than the last. Chaining flips is how a
+  player climbs and covers ground.
+- Level progression grants **backflips**, so more levels means more air.
 
 **Progression**
 
@@ -91,8 +95,12 @@ Procedural, bone-driven, and required for the finished game — not a placeholde
   and resolved onto each bone's baked local axes by `PlayerRig`. Every frame
   rebuilds `rotation * restQuaternion` from scratch, so posing cannot drift.
 - Backflips rotate a **flip pivot** at hip height inside the character, plus a
-  bone tuck. Never rotate the whole rendered object, and never let a flip touch
-  horizontal velocity — the jump arc must be identical with and without flips.
+  bone tuck. Never rotate the whole rendered object.
+- The flip's lift and forward impulse are applied by `LocalPlayer`, which owns
+  velocity — **never by the animator**. The animator stays purely visual: it
+  writes bones, the flip pivot and the bob node, and nothing else. Keeping the
+  impulse in gameplay is what lets flips change the arc without the animation
+  system ever being able to move the player.
 - Chained flips ADD a full turn to the target angle rather than restarting.
   Rotation is one scalar, wrapped modulo 2π only at read time and rebuilt with
   `setFromAxisAngle`; quaternions are never accumulated across frames.
@@ -100,6 +108,36 @@ Procedural, bone-driven, and required for the finished game — not a placeholde
   performed" are **different state**. Having flips available never performs one.
 - Remote players run the same animator, reconstructed locally from compact
   replicated signals. **Never transmit bone transforms.**
+
+## World
+
+- The gorge layout is **pure data** in `shared/src/config/gorge.ts` - platform
+  positions, trophy values, bank terraces and redlines. Never scatter world
+  coordinates through scene code.
+- `TROPHY_PLATFORMS` is **generated from a gap list**, so a per-platform X,
+  Y or rotation cannot be introduced by accident. Every platform shares one
+  geometry and one material; only the mesh's Z differs.
+- Islands are **rectangular and wider across the gorge than along it** (22 x 11).
+  The collection pad sits at the **far left** of every island, so a player who
+  wants a bigger trophy runs down the right-hand lane instead.
+- `GorgeCollision` is the gameplay shape of the world and `GorgeWorld` is its
+  visuals. Both read the same config, so they cannot drift apart.
+- Redlines sit **over islands**, with one exception: a line high enough that a
+  normal jump passes under it (y >= 7.2) may span a gap, where it reads as "do
+  not flip here". Any other height over a gap is unfair - the jump arc is under
+  a metre high at the launch edge, so a low line is unclearable, and it peaks
+  above head height mid-gap, so a mid line is unavoidable.
+- **Hazard spacing is a hard constraint, not taste.** A low line needs ~1.9
+  units of run-up before it, because it is only cleared once the player's FEET
+  pass it. A high line cannot be launched from within ~0.9 units, because the
+  head rises into it immediately. Place a high line just before a low one and
+  those windows exclude each other, leaving no legal launch point. A pair on one
+  island needs ~4.5 units between them; most islands carry a single line.
+- The collection pad is narrower than the platform on purpose - a player can
+  skirt around it to push on for a bigger trophy. Banking is a choice.
+- Trophy rewards are granted in exactly one place: `TrophyService` on the
+  server. It validates the platform, the run's claim history, the player's
+  reported position and a claim cooldown. The client only ever asks.
 
 ## Architecture rules
 
@@ -112,19 +150,18 @@ Procedural, bone-driven, and required for the finished game — not a placeholde
 
 ## Current milestone
 
-Milestone 2 (player foundation + animation) is complete: client + server start,
-the client joins the room, `player.fbx` loads with a working material fallback,
-third-person camera, desktop movement, position/rotation sync with ghosted
-remote players, and the full procedural animation system (idle, walk, run,
-jump start, airborne, landing, backflip, chained backflip) — all on a
-**temporary flat test floor**.
+Milestone 3 (the gorge) is complete: the linear gorge world in the toy-brick
+reference style - blue tiled channel, steep canyon walls, studded grass rims
+with instanced conifers, a cloudy sky - plus nine identical wide islands
+(+1 to +100) on one straight axis, left-hand collection pads, server-validated
+trophy collection, red hazard lines, and backflips as a traversal move.
+All world textures are generated procedurally on canvas; no image assets.
 
-`client/src/world/TestFloor.ts` is scaffolding. Delete it when the real gorge
-lands.
+The temporary test floor is gone.
 
-**Not built yet, and out of scope until the milestone advances:** gorge,
-trophy platforms, trophies, boots, rebirth, treadmills, level progression,
-full UI, monetization, final environment, VFX, audio.
+**Not built yet, and out of scope until the milestone advances:** boot shop,
+rebirth, treadmills, level progression, full UI, monetization, final VFX,
+audio.
 
 Backflips are ANIMATED and input-driven, but the progression that grants them
 is not built: `BACKFLIP.defaultCapacity` in `shared/src/config/backflip.ts` is
