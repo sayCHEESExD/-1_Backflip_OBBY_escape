@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "profiles": {
+    "local_a": {
+      "totalSpeed": 161.3431639259815,
+      "wins": 0,
+      "rebirths": 0,
+      "ownedBoots": 1,
+      "ownedTrails": 0,
+      "trailSlot": 0,
+      "ownedAuras": 0,
+      "auraSlot": 0
+    },
+    "p_f9j7633ep7smtn3icer": {
+      "totalSpeed": 223.9768888345746,
+      "wins": 6,
+      "rebirths": 0,
+      "ownedBoots": 1,
+      "ownedTrails": 0,
+      "trailSlot": 0,
+      "ownedAuras": 0,
+      "auraSlot": 0
+    },
+    "local_b": {
+      "totalSpeed": 46.271084174716634,
+      "wins": 1,
+      "rebirths": 0,
+      "ownedBoots": 1,
+      "ownedTrails": 0,
+      "trailSlot": 0,
+      "ownedAuras": 0,
+      "auraSlot": 0
+    },
+    "lat_120": {
+      "totalSpeed": 47.473810291190496,
+      "wins": 1,
+      "rebirths": 0,
+      "ownedBoots": 1,
+      "ownedTrails": 0,
+      "trailSlot": 0,
+      "ownedAuras": 0,
+      "auraSlot": 0
+    },
+    "lat_300": {
+      "totalSpeed": 52.73008472675611,
+      "wins": 1,
+      "rebirths": 0,
+      "ownedBoots": 1,
+      "ownedTrails": 0,
+      "trailSlot": 0,
+      "ownedAuras": 0,
+      "auraSlot": 0
+    }
+  }
+}

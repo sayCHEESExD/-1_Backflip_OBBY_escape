@@ -54,6 +54,24 @@
       #boot[hidden] {
         display: none;
       }
+      /*
+       * Offline: the panel stops covering the game and becomes a corner card,
+       * so the session is still playable but never silently pretends to be
+       * connected. Everything it gates - Wins, levels, shops - is server-owned.
+       */
+      #boot.notice {
+        inset: auto 12px 12px auto;
+        place-content: start;
+        padding: 12px 14px;
+        max-width: 40ch;
+        border: 1px solid #7f1d1d;
+        border-radius: 8px;
+        background: rgba(12, 16, 24, 0.92);
+        pointer-events: none;
+      }
+      #boot.notice h1 {
+        margin-bottom: 6px;
+      }
       #boot h1 {
         font-size: 15px;
         letter-spacing: 0.08em;

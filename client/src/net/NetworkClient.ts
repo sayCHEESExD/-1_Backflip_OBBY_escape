@@ -20,6 +20,23 @@ const SCOPE = 'NetworkClient';
 const PLAYER_ID_KEY = 'obby.playerId';
 
 /**
+ * Backoff between join attempts, in milliseconds. One entry per RETRY.
+ *
+ * A free managed host suspends an idle service and takes the better part of a
+ * minute to wake it, so the first visitor after a quiet spell always meets a
+ * server that is not listening yet. A single attempt turns that into a session
+ * that is permanently offline - it renders and it moves, so it looks healthy,
+ * but nothing is server-authoritative and therefore nothing progresses. These
+ * retries turn a cold start into a slow start instead.
+ */
+const JOIN_BACKOFF_MS = [1000, 2000, 4000, 8000, 15000, 20000] as const;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+/**
  * A stable id for this browser, so progression survives a reload.
  *
  * Falls back to a throwaway id when storage is unavailable (private windows,
@@ -78,16 +95,33 @@ export class NetworkClient {
     this.setStatus('connecting');
     logger.info(SCOPE, `joining "${ROOM_NAME}" at ${clientConfig.serverUrl}`);
 
-    try {
-      this.room = await this.client.joinOrCreate<NetGorgeState>(ROOM_NAME, {
-        playerId: resolvePlayerId(),
-      });
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      this.setStatus('error', detail);
-      logger.error(SCOPE, 'join failed:', detail);
-      throw error;
+    const playerId = resolvePlayerId();
+    const attempts = JOIN_BACKOFF_MS.length + 1;
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        this.room = await this.client.joinOrCreate<NetGorgeState>(ROOM_NAME, {
+          playerId,
+        });
+        break;
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        logger.warn(SCOPE, `join attempt ${attempt}/${attempts} failed: ${detail}`);
+
+        if (attempt === attempts) {
+          this.setStatus('error', detail);
+          logger.error(SCOPE, 'join failed:', detail);
+          throw error;
+        }
+
+        // Kept in 'connecting' with the attempt as the detail, so the status
+        // listener sees a wake-up in progress rather than a dead connection.
+        this.setStatus('connecting', `attempt ${attempt + 1}/${attempts}`);
+        await sleep(JOIN_BACKOFF_MS[attempt - 1] ?? 0);
+      }
     }
+
+    if (!this.room) throw new Error('join produced no room');
 
     this.bindRoom(this.room);
     this.setStatus('connected');
