@@ -2,6 +2,7 @@ import { Server } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { ROOM_NAME } from '@obby/shared';
 import { serverConfig } from './config/serverConfig.js';
+import { createHttpServer } from './httpServer.js';
 import { profileStore } from './progression/ProfileStore.js';
 import { GorgeRoom } from './rooms/GorgeRoom.js';
 import { logger } from './util/logger.js';
@@ -12,8 +13,11 @@ const SCOPE = 'server';
 // join already finds their progression in memory.
 profileStore.open();
 
+// Colyseus attaches to OUR http server rather than making its own, so the
+// same port answers both the WebSocket upgrade and a plain /health probe -
+// which is what a managed host polls to decide the service is up.
 const gameServer = new Server({
-  transport: new WebSocketTransport(),
+  transport: new WebSocketTransport({ server: createHttpServer() }),
   greet: false,
 });
 
@@ -24,7 +28,8 @@ gameServer
   .then(() => {
     logger.info(
       SCOPE,
-      `listening on ws://${serverConfig.host}:${serverConfig.port} room="${ROOM_NAME}"`,
+      `listening on ${serverConfig.host}:${serverConfig.port} ` +
+        `room="${ROOM_NAME}" health=/health`,
     );
   })
   .catch((error: unknown) => {

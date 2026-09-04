@@ -18,6 +18,8 @@
     "dev:server": "npm run dev --workspace @obby/server",
     "dev:client": "npm run dev --workspace @obby/client",
     "build": "npm run build:shared && npm run build --workspace @obby/server && npm run build --workspace @obby/client",
+    "build:client": "npm run build:shared && npm run build --workspace @obby/client",
+    "build:server": "npm run build:shared && npm run build --workspace @obby/server",
     "typecheck": "npm run build:shared && npm run typecheck --workspaces --if-present",
     "start": "npm run start --workspace @obby/server",
     "inspect:fbx": "node scripts/inspect-fbx.mjs assets/player/player.fbx",
