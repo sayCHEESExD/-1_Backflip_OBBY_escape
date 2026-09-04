@@ -63,7 +63,15 @@ interface PendingInput {
   input: MovementInput;
 }
 
-/** The authoritative fields the client reconciles against. */
+/**
+ * The authoritative fields the client reconciles against.
+ *
+ * This must cover EVERY field of `PlayerMotion`, not just the visible ones.
+ * Replay re-runs `stepPlayer`, and that reads latched state - the jump edge
+ * and the flips already taken this airtime - as well as the transform. Restore
+ * a partial state and replay takes different decisions than the server did,
+ * which is divergence the correction offset then has to hide.
+ */
 export interface AuthoritativeMotion {
   x: number;
   y: number;
@@ -78,6 +86,10 @@ export interface AuthoritativeMotion {
   lastInputSeq: number;
   /** Treadmill the server has the player running on, or 0. */
   treadmillTier: number;
+  /** Latched jump edge - whether the server had the control held down. */
+  jumpLatched: boolean;
+  /** Flips already taken this airtime, which sets the next flip's lift. */
+  flipsThisAirtime: number;
 }
 
 /**
@@ -306,6 +318,13 @@ export class LocalPlayer {
     this.motion.flipCount = state.flipCount;
     this.motion.backflipsRemaining = state.flipsRemaining;
     this.motion.treadmillTier = state.treadmillTier;
+    // The latched half. Without these two the replay below re-derives its own
+    // jump and flip edges from whatever the prediction happened to be holding,
+    // so a pending flip could fire twice or not at all - the allowance jumping
+    // 8/9 -> 9/9 in mid air, and the arc jumping with it. They cost two bytes
+    // a patch and make replay bit-exact.
+    this.motion.jumpLatched = state.jumpLatched;
+    this.motion.flipsThisAirtime = state.flipsThisAirtime;
 
     // Drop everything the server has already simulated, then replay the rest.
     let kept = 0;

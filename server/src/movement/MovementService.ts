@@ -231,6 +231,11 @@ export class MovementService {
     player.grounded = m.grounded;
     player.flipCount = m.flipCount;
     player.flipsRemaining = m.backflipsRemaining;
+    // The latched half of the simulation. Replicated for one reason only: the
+    // client cannot replay its pending input correctly without resuming from
+    // the same edge state the server stopped at.
+    player.jumpLatched = m.jumpLatched;
+    player.flipsThisAirtime = m.flipsThisAirtime;
     player.lastInputSeq = sim.lastSeq;
     player.ready = true;
     // The simulation owns whether the player is running on a machine.

@@ -41,6 +41,21 @@ export class PlayerState extends Schema {
   @type('uint8') flipsRemaining = 1;
 
   /**
+   * LATCHED simulation state, replicated so client reconciliation can restore
+   * the FULL authoritative motion before it replays unacknowledged input.
+   *
+   * Neither is a transform and neither is ever read back from a client. They
+   * are here because replay is only correct when it resumes from exactly the
+   * state the server was in: `jumpLatched` decides whether the next input
+   * counts as a fresh press, and `flipsThisAirtime` sets how hard the next
+   * flip lifts. Restoring position and velocity but not these made replay
+   * re-derive different jump and flip EDGES than the server took, which is
+   * what made the allowance flicker and the arc jump under latency.
+   */
+  @type('boolean') jumpLatched = false;
+  @type('uint8') flipsThisAirtime = 0;
+
+  /**
    * Monotonic count of flips this player has STARTED. Remote clients replay a
    * flip whenever it increases - one integer instead of a rotation stream.
    */

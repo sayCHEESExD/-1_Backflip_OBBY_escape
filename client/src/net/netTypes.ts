@@ -54,6 +54,10 @@ export interface NetPlayerState extends PlayerMotionState {
   lastInputSeq: number;
   /** Flips left in the current airborne window, owned by the server. */
   flipsRemaining: number;
+  /** Latched jump edge, so replay resumes from the server's own edge state. */
+  jumpLatched: boolean;
+  /** Flips already taken this airtime, so a replayed flip lifts identically. */
+  flipsThisAirtime: number;
   ready: boolean;
 }
 
