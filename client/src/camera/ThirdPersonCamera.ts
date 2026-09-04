@@ -2,7 +2,6 @@ import { CAMERA } from '@obby/shared';
 import { PerspectiveCamera, Vector3 } from 'three';
 
 const FORWARD = new Vector3();
-const DESIRED = new Vector3();
 const LOOK_TARGET = new Vector3();
 const OFFSET = new Vector3();
 
@@ -23,6 +22,8 @@ export class ThirdPersonCamera {
   readonly camera: PerspectiveCamera;
 
   private readonly target = new Vector3();
+  /** Smoothed point the camera orbits. The only thing that is smoothed. */
+  private readonly followed = new Vector3();
   /** Orbit angles, written by the mouse. */
   private orbitYaw = 0;
   private orbitPitch = 0.22;
@@ -56,6 +57,22 @@ export class ThirdPersonCamera {
   }
 
   update(delta: number): void {
+    // ONE smoothing stage, applied to the point the camera follows.
+    //
+    // The camera position used to be smoothed while the look target was taken
+    // raw, so any jitter in the player's transform rotated the view directly
+    // even though the position absorbed it - the two disagreed every frame,
+    // which is exactly what reads as vibration. Smoothing the followed POINT
+    // and deriving both the position and the look target from it means they
+    // can no longer disagree.
+    if (!this.initialised) {
+      this.followed.copy(this.target);
+      this.initialised = true;
+    } else {
+      // Frame-rate independent exponential smoothing.
+      this.followed.lerp(this.target, 1 - Math.exp(-CAMERA.followLerp * delta));
+    }
+
     // Where the camera sits: back along its own yaw, lifted by its pitch. The
     // pitch shortens the horizontal reach as it rises, so the camera swings
     // over the player rather than sliding away from them.
@@ -64,22 +81,14 @@ export class ThirdPersonCamera {
 
     FORWARD.set(Math.sin(this.orbitYaw) * cosPitch, 0, Math.cos(this.orbitYaw) * cosPitch);
 
-    DESIRED.copy(this.target)
+    // Applied directly, not lerped again: the look angles must never lag the
+    // mouse, and the follow point is already smooth.
+    this.camera.position
+      .copy(this.followed)
       .addScaledVector(FORWARD, -CAMERA.distance)
       .add(OFFSET.set(0, CAMERA.height + sinPitch * CAMERA.distance, 0));
 
-    if (!this.initialised) {
-      this.camera.position.copy(DESIRED);
-      this.initialised = true;
-    } else {
-      // Frame-rate independent exponential smoothing. Only the POSITION is
-      // smoothed - the look angles are applied immediately, so the view never
-      // lags the mouse.
-      const alpha = 1 - Math.exp(-CAMERA.followLerp * delta);
-      this.camera.position.lerp(DESIRED, alpha);
-    }
-
-    LOOK_TARGET.copy(this.target).add(OFFSET.set(0, CAMERA.lookAtHeight, 0));
+    LOOK_TARGET.copy(this.followed).add(OFFSET.set(0, CAMERA.lookAtHeight, 0));
     this.camera.lookAt(LOOK_TARGET);
   }
 }

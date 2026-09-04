@@ -7,7 +7,7 @@ import {
   treadmillEntryAt,
   treadmillRunX,
 } from '../config/treadmills.js';
-import { SPAWN_POSITION, SPAWN_ROTATION_Y } from '../constants/world.js';
+import { PLAYER_HEIGHT, SPAWN_POSITION, SPAWN_ROTATION_Y } from '../constants/world.js';
 import type { WorldCollision } from './WorldCollision.js';
 
 /**
@@ -93,6 +93,7 @@ export interface SimEvents {
 
 /** Largest single step the simulation will take, in seconds. */
 export const MAX_SIM_DELTA = 0.1;
+
 
 export const createMotion = (): PlayerMotion => ({
   x: SPAWN_POSITION.x,
@@ -247,6 +248,7 @@ export const stepPlayer = (
   motion.x = BOUNDS.x;
   motion.z = BOUNDS.z;
 
+  resolveCeiling(motion, previousY, collision);
   resolveGround(motion, previousY, collision);
 
   if (!wasGrounded && motion.grounded) {
@@ -445,6 +447,30 @@ const applyHorizontal = (
       motion.vz *= scale;
     }
   }
+};
+
+/**
+ * Stop a rising player at the underside of the platform above them.
+ *
+ * Runs BEFORE the ground test, because a player pushed down out of a ceiling
+ * may immediately be standing on something, and the ground test should see the
+ * corrected height rather than the one that was inside a slab.
+ */
+const resolveCeiling = (
+  motion: PlayerMotion,
+  previousY: number,
+  collision: WorldCollision,
+): void => {
+  if (motion.vy <= 0) return;
+
+  const ceiling = collision.ceilingYAt(motion.x, motion.z, previousY + PLAYER_HEIGHT);
+  if (ceiling === null) return;
+  if (motion.y + PLAYER_HEIGHT <= ceiling) return;
+
+  motion.y = ceiling - PLAYER_HEIGHT;
+  // The climb stops dead; horizontal travel is untouched, so a player who
+  // clips a corner slides along under it rather than being halted.
+  motion.vy = 0;
 };
 
 /**

@@ -19,6 +19,10 @@ export const WORLD_COLORS = {
   /** Studded grass for the starting area. */
   spawnGrass: '#57cc33',
   spawnGrassStud: '#6ee047',
+  /** Capping course along the top of the spawn walls, and the corner posts. */
+  spawnCoping: 0x8fb7d9,
+  /** Rock ledge where the starting headland meets the canyon. */
+  headlandLedge: 0x6f7f95,
   /** Slate trophy islands. */
   platformTile: '#b6c3ce',
   platformTileAlt: '#c3ced8',
@@ -32,8 +36,8 @@ export const WORLD_COLORS = {
   /** Tree canopy, two tones for variety. */
   canopyA: 0x2f9f36,
   canopyB: 0x45bf49,
-  /** Fog colour, matched to the sky near the horizon. */
-  sky: 0xa8dcff,
+  /** Fog colour, matched to the sky's bright band just above the horizon. */
+  sky: 0xbfe8ff,
 } as const;
 
 /** Deck colour and icon for one themed island. */

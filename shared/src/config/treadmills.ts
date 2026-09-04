@@ -87,6 +87,32 @@ export const TREADMILL_DECK_Y = SPAWN_PLATFORM.topY + TREADMILL_ROW.deckHeight;
 export const TREADMILL_CONSOLE_Z =
   TREADMILL_ROW.centerZ - TREADMILL_ROW.beltLength / 2 - TREADMILL_ROW.consoleDepth / 2;
 
+/**
+ * Footprint of the treadmill bay's dedicated floor.
+ *
+ * Lives in shared config so the bay floor and the spawn grass are cut from the
+ * SAME rectangle. They meet edge to edge and neither covers the other, which
+ * is the only way to keep one owner per visible surface.
+ */
+export const TREADMILL_BAY = {
+  marginX: 2.6,
+  marginZ: 2.2,
+  get minX(): number {
+    return treadmillX(1) - TREADMILL_ROW.beltWidth / 2 - this.marginX;
+  },
+  get maxX(): number {
+    return (
+      treadmillX(TREADMILL_TIERS.length) + TREADMILL_ROW.beltWidth / 2 + this.marginX
+    );
+  },
+  get minZ(): number {
+    return TREADMILL_CONSOLE_Z - TREADMILL_ROW.consoleDepth / 2 - 0.8;
+  },
+  get maxZ(): number {
+    return TREADMILL_ROW.centerZ + TREADMILL_ROW.beltLength / 2 + this.marginZ;
+  },
+} as const;
+
 /** Look up a tier by number. */
 export const treadmillByTier = (tier: number): TreadmillTier | undefined =>
   TREADMILL_TIERS.find((entry) => entry.tier === tier);

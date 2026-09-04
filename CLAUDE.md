@@ -46,6 +46,19 @@ engine. Do not add a framework or a build tool without a concrete need.
   control scheme. `ThirdPersonCamera` owns its yaw/pitch, `MouseLook` writes
   them, and `stepPlayer` rotates the stick by that yaw. The character's facing
   then follows where it actually moves.
+- **One render transform.** `LocalPlayer.position` is the simulation
+  interpolated to the current frame PLUS the eased reconciliation offset, and
+  the camera, the character and the world triggers all read it. Two separate
+  transforms is what caused camera vibration: the simulation only advances on
+  60Hz boundaries, so a 144Hz display saw it move in bursts, and the camera
+  followed the raw position while the character rendered at a corrected one.
+- The camera smooths the POINT IT FOLLOWS, once. Smoothing the position while
+  taking the look target raw makes the two disagree every frame, which reads as
+  vibration however gentle the smoothing is.
+- `reconcile` must not collapse the interpolation baseline onto the replayed
+  state: replay re-runs inputs the client already ran, so the baseline is still
+  valid, and re-basing it twenty times a second is a visible tick. Only a SNAP
+  (past `SNAP_DISTANCE`) resets it.
 - The camera's RIGHT is `(-cos yaw, sin yaw)`, not `(cos yaw, -sin yaw)`: with
   Y up and +X to the right of screen, +Z runs away from the viewer, which is
   why +X is the player's left down the gorge. Getting this backwards inverts
@@ -190,6 +203,12 @@ Procedural, bone-driven, and required for the finished game — not a placeholde
   geometry AND the shared material, so the geometry rule is untouched.
 - `GorgeCollision` is the gameplay shape of the world and `GorgeWorld` is its
   visuals. Both read the same config, so they cannot drift apart.
+- Redlines cover EVERY gap from the +10 island to the end of the route. The
+  ramp is 1 line, 2 lines, three single columns, then the endgame pattern -
+  three columns of three rows - repeated for every remaining gap. It repeats
+  rather than escalating with gap length: out past +100 the gaps run to two
+  thousand units, and scaling the hazard count with them would build a wall no
+  arc could pass instead of a gate to thread.
 - Redlines sit **in the gaps between islands**, never on an island. An island
   is where a player lands, re-aims and launches; a hazard there punishes the
   one part of the route that must be safe. A gap is the opposite - the player
@@ -197,7 +216,11 @@ Procedural, bone-driven, and required for the finished game — not a placeholde
 - Every line spans **bank to bank**. Its half-span comes from `bankXAtHeight`,
   which follows the canyon wall, so a high line is a LONGER line and both ends
   are always buried in terrain rather than stopping in mid air.
-- A stacked "column" of rows must leave a passable window: the hit test treats
+- A stacked column is now a TIGHT BAND (rows 2.4 apart), deliberately below the
+  threading threshold, so it has one answer: clear the whole thing. Widening
+  the spacing back past 3.64 silently re-opens the gaps between rows.
+- Superseded, kept for the arithmetic - a column that DOES want a passable
+  window between rows: the hit test treats
   the player as a box 3.2 tall and each line is 0.22 thick, so rows need more
   than 3.64 units of clear air between them. `ROW_HEIGHTS` uses 4.8.
 - Superseded, kept for context - redlines used to sit over islands: a line high enough that a
@@ -211,6 +234,36 @@ Procedural, bone-driven, and required for the finished game — not a placeholde
   head rises into it immediately. Place a high line just before a low one and
   those windows exclude each other, leaving no legal launch point. A pair on one
   island needs ~4.5 units between them; most islands carry a single line.
+- **One owner per visible surface.** The island body stops where its deck
+  begins, and the spawn grass is cut into four slabs around the treadmill bay
+  (`TREADMILL_BAY`, shared config, so the hole and the floor come from one
+  rectangle). Two surfaces a hundredth apart is z-fighting, not layering; the
+  fix is always to remove one of them, never to nudge it.
+- Walls stop at the INNER FACE of the wall they meet, never at the platform
+  edge - running them to the edge buries one wall inside another with both tops
+  at the same height.
+- The canyon SLOPES start at the gorge mouth, not at `GORGE.startZ`. A slope
+  crosses platform height at x = 27.9 while the starting headland reaches
+  x = 33, so running them the full length pushed five units of blue bank up
+  through the spawn grass on both sides. The RIMS still run the full length -
+  they sit outboard of the headland and cannot intersect it.
+- A sign hung near a wall must clear that wall's COPING, which oversails it by
+  a quarter on each side.
+- **Platforms are solid slabs, not one-way floors.** `resolveCeiling` stops a
+  rising player at the underside; without it the whole route was climbable from
+  below. The head test is gated on the player's PREVIOUS head height, so
+  standing on a platform never traps them under the one they are on, and the
+  ceiling footprint is deliberately not inflated by the player radius - the
+  ground test inflates so you can stand on an edge, but inflating a ceiling
+  would block you in mid air beside one.
+- The Win pad is a BUILT object - framed chequered slab plus gold trophies -
+  because the place a reward is banked has to read from across a gap. One
+  frame geometry, one top geometry and a single InstancedMesh carrying every
+  trophy on the route. It marks the spot; `TrophyService` decides the reward.
+- The treadmill bay's floor is INLAID - its top sits exactly at platform level
+  rather than raised - so the area reads as a dedicated room without adding a
+  step the simulation would have to know about. The machines keep their own
+  0.2 deck step, which is the only thing the player actually walks onto.
 - The collection pad is narrower than the platform on purpose - a player can
   skirt around it to push on for a bigger trophy. Banking is a choice.
 - Trophy rewards are granted in exactly one place: `TrophyService` on the

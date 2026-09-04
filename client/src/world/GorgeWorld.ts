@@ -6,7 +6,9 @@ import { WorldCollision } from '@obby/shared';
 import { GorgeTerrain } from './GorgeTerrain.js';
 import { Redlines } from './Redlines.js';
 import { SpawnArea } from './SpawnArea.js';
+import { TreadmillArea } from './TreadmillArea.js';
 import { Treadmills } from './Treadmills.js';
+import { WinPads } from './WinPads.js';
 import { TrophyPlatforms } from './TrophyPlatforms.js';
 import { WorldTextures } from './WorldTextures.js';
 
@@ -31,18 +33,23 @@ export class GorgeWorld {
   private readonly foliage = new Foliage();
   readonly bootShop = new BootShop();
   readonly treadmills = new Treadmills();
+  private readonly treadmillArea = new TreadmillArea();
+  readonly winPads: WinPads;
 
   constructor() {
     this.terrain = new GorgeTerrain(this.textures);
     this.platforms = new TrophyPlatforms(this.textures);
     this.spawnArea = new SpawnArea(this.textures);
+    this.winPads = new WinPads(this.textures);
 
     this.root.add(this.terrain.root);
     this.root.add(this.platforms.root);
     this.root.add(this.redlines.root);
     this.root.add(this.foliage.root);
     this.root.add(this.bootShop.root);
+    this.root.add(this.treadmillArea.root);
     this.root.add(this.treadmills.root);
+    this.root.add(this.winPads.root);
     this.root.add(this.spawnArea.root);
   }
 
@@ -64,6 +71,8 @@ export class GorgeWorld {
     this.foliage.dispose();
     this.bootShop.dispose();
     this.treadmills.dispose();
+    this.treadmillArea.dispose();
+    this.winPads.dispose();
     this.spawnArea.dispose();
     this.textures.dispose();
     this.root.removeFromParent();

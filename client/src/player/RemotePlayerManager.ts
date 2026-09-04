@@ -71,8 +71,21 @@ export class RemotePlayerManager {
     logger.info(SCOPE, `remote player removed: ${sessionId} (total ${this.players.size})`);
   }
 
+  /**
+   * Called when a remote player touches down, with their world position.
+   *
+   * Derived entirely from replicated state, so remote landing effects cost no
+   * network traffic at all.
+   */
+  onLanded: ((x: number, y: number, z: number) => void) | null = null;
+
   update(delta: number): void {
-    for (const player of this.players.values()) player.update(delta);
+    for (const player of this.players.values()) {
+      player.update(delta);
+      if (!player.landedThisFrame) continue;
+      const at = player.character.root.position;
+      this.onLanded?.(at.x, at.y, at.z);
+    }
   }
 
   dispose(): void {

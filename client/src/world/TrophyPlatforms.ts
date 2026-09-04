@@ -5,6 +5,7 @@ import {
   PLATFORM,
   GORGE,
   GORGE_HEAD,
+  TREADMILL_BAY,
   SPAWN_PLATFORM,
   TROPHY_PLATFORMS,
 } from '@obby/shared';
@@ -39,13 +40,15 @@ import type { WorldTextures } from './WorldTextures.js';
  * rule is untouched. What varies per island is presentation only: a thin
  * coloured deck laid on top, and the area name floating above it.
  */
+/** Thickness of the grass laid over the headland's rock. */
+const GRASS_THICKNESS = 0.5;
+
 export class TrophyPlatforms {
   readonly root = new Group();
 
   private readonly geometries: BoxGeometry[] = [];
   private readonly materials: Material[] = [];
   private readonly textures: Texture[] = [];
-  private padGeometry: PlaneGeometry | null = null;
   private padLabelGeometry: PlaneGeometry | null = null;
   private areaLabelGeometry: PlaneGeometry | null = null;
 
@@ -58,7 +61,6 @@ export class TrophyPlatforms {
     for (const geometry of this.geometries) geometry.dispose();
     for (const material of this.materials) material.dispose();
     for (const texture of this.textures) texture.dispose();
-    this.padGeometry?.dispose();
     this.padLabelGeometry?.dispose();
     this.areaLabelGeometry?.dispose();
   }
@@ -82,16 +84,6 @@ export class TrophyPlatforms {
     const length = GORGE_HEAD.riverStartZ - backZ;
     const height = SPAWN_PLATFORM.topY - GORGE_HEAD.baseY;
 
-    const geometry = new BoxGeometry(width, height, length);
-    this.geometries.push(geometry);
-
-    const grassMap = textures.grassStuds(
-      WORLD_COLORS.spawnGrass,
-      WORLD_COLORS.spawnGrassStud,
-    );
-    grassMap.repeat.set(width * 0.22, length * 0.22);
-    const grass = new MeshLambertMaterial({ map: grassMap });
-
     const rockMap = textures.tiles(
       WORLD_COLORS.wallTile,
       WORLD_COLORS.wallLine,
@@ -99,26 +91,101 @@ export class TrophyPlatforms {
     );
     rockMap.repeat.set(length * 0.12, height * 0.12);
     const rock = new MeshLambertMaterial({ map: rockMap });
-    this.materials.push(grass, rock);
+    this.materials.push(rock);
 
-    // Box material order: +X, -X, +Y, -Y, +Z, -Z. Only the top is grass.
-    const mesh = new Mesh(geometry, [rock, rock, grass, rock, rock, rock]);
-    mesh.position.set(
+    // The headland is ALL rock and its top stops short of the walkable
+    // surface. The grass is laid on separately as slabs, so the treadmill bay
+    // can own its own rectangle of floor instead of the two fighting over it.
+    const bodyGeometry = new BoxGeometry(width, height - GRASS_THICKNESS, length);
+    this.geometries.push(bodyGeometry);
+
+    const body = new Mesh(bodyGeometry, rock);
+    body.position.set(
       SPAWN_PLATFORM.x,
-      SPAWN_PLATFORM.topY - height / 2,
+      SPAWN_PLATFORM.topY - GRASS_THICKNESS - (height - GRASS_THICKNESS) / 2,
       backZ + length / 2,
     );
-    mesh.receiveShadow = true;
-    this.root.add(mesh);
+    body.receiveShadow = true;
+    this.root.add(body);
+
+    // A rock ledge stepping out just below the grass, so the headland reads as
+    // cut terrain meeting the canyon rather than a box with a lawn on top.
+    const ledgeGeometry = new BoxGeometry(width + 3, 1.6, length + 3);
+    const ledgeMaterial = new MeshLambertMaterial({
+      map: rockMap,
+      color: new Color(WORLD_COLORS.headlandLedge),
+    });
+    this.geometries.push(ledgeGeometry);
+    this.materials.push(ledgeMaterial);
+
+    const ledge = new Mesh(ledgeGeometry, ledgeMaterial);
+    ledge.position.set(
+      SPAWN_PLATFORM.x,
+      SPAWN_PLATFORM.topY - GRASS_THICKNESS - 1.5,
+      backZ + length / 2,
+    );
+    ledge.receiveShadow = true;
+    this.root.add(ledge);
+
+    this.buildSpawnGrass(textures, width, backZ, length);
+  }
+
+  /**
+   * The grass surface, cut around the treadmill bay.
+   *
+   * Four slabs rather than one, because the bay floor owns the rectangle in
+   * the middle of them. Every visible square of the starting area therefore
+   * belongs to exactly one mesh, with no two surfaces at the same height.
+   */
+  private buildSpawnGrass(
+    textures: WorldTextures,
+    width: number,
+    backZ: number,
+    length: number,
+  ): void {
+    const map = textures.grassStuds(WORLD_COLORS.spawnGrass, WORLD_COLORS.spawnGrassStud);
+    map.repeat.set(width * 0.22, length * 0.22);
+    const grass = new MeshLambertMaterial({ map });
+    this.materials.push(grass);
+
+    const frontZ = backZ + length;
+    const halfWidth = width / 2;
+    const bay = TREADMILL_BAY;
+
+    // [minX, maxX, minZ, maxZ] for each slab around the bay.
+    const slabs: [number, number, number, number][] = [
+      [-halfWidth, halfWidth, bay.maxZ, frontZ],
+      [-halfWidth, halfWidth, backZ, bay.minZ],
+      [-halfWidth, bay.minX, bay.minZ, bay.maxZ],
+      [bay.maxX, halfWidth, bay.minZ, bay.maxZ],
+    ];
+
+    for (const [minX, maxX, minZ, maxZ] of slabs) {
+      const sizeX = maxX - minX;
+      const sizeZ = maxZ - minZ;
+      if (sizeX <= 0.01 || sizeZ <= 0.01) continue;
+
+      const geometry = new BoxGeometry(sizeX, GRASS_THICKNESS, sizeZ);
+      this.geometries.push(geometry);
+
+      const slab = new Mesh(geometry, grass);
+      slab.position.set(
+        (minX + maxX) / 2,
+        SPAWN_PLATFORM.topY - GRASS_THICKNESS / 2,
+        (minZ + maxZ) / 2,
+      );
+      slab.receiveShadow = true;
+      this.root.add(slab);
+    }
   }
 
   private buildTrophyPlatforms(textures: WorldTextures): void {
-    // Shared across every island: identical width, length and thickness.
-    const bodyGeometry = new BoxGeometry(
-      PLATFORM.width,
-      PLATFORM.thickness,
-      PLATFORM.length,
-    );
+    // Shared across every island. The body is SHORTENED by the deck's
+    // thickness and the deck sits in the space it leaves, so the two meet at
+    // one coincident hidden face instead of two tops a hundredth apart - which
+    // is what was z-fighting across every island at distance.
+    const bodyHeight = PLATFORM.thickness - AREA_DECK_THICKNESS;
+    const bodyGeometry = new BoxGeometry(PLATFORM.width, bodyHeight, PLATFORM.length);
     const tileMap = textures.tiles(
       WORLD_COLORS.platformTile,
       WORLD_COLORS.platformLine,
@@ -137,16 +204,8 @@ export class TrophyPlatforms {
     );
     this.geometries.push(deckGeometry);
 
-    this.padGeometry = new PlaneGeometry(COLLECTION_ZONE.width, COLLECTION_ZONE.depth);
     this.padLabelGeometry = new PlaneGeometry(5.6, 3.4);
     this.areaLabelGeometry = new PlaneGeometry(13, 4.3);
-
-    const padMaterial = new MeshBasicMaterial({
-      color: WORLD_COLORS.collectionPad,
-      transparent: true,
-      opacity: 0.85,
-    });
-    this.materials.push(padMaterial);
 
     for (const platform of TROPHY_PLATFORMS) {
       const theme = AREA_THEMES[platform.area] ?? DEFAULT_AREA_THEME;
@@ -155,7 +214,7 @@ export class TrophyPlatforms {
       // Identical X, Y and rotation for every island - only Z varies.
       body.position.set(
         PLATFORM.x,
-        PLATFORM.topY - PLATFORM.thickness / 2,
+        PLATFORM.topY - AREA_DECK_THICKNESS - bodyHeight / 2,
         platform.centerZ,
       );
       body.rotation.y = PLATFORM.rotationY;
@@ -173,9 +232,11 @@ export class TrophyPlatforms {
       this.materials.push(deckMaterial);
 
       const deck = new Mesh(deckGeometry, deckMaterial);
+      // Top face exactly at the collision surface; bottom face coincident with
+      // the body's top, where it is hidden.
       deck.position.set(
         PLATFORM.x,
-        PLATFORM.topY - AREA_DECK_THICKNESS / 2 + 0.01,
+        PLATFORM.topY - AREA_DECK_THICKNESS / 2,
         platform.centerZ,
       );
       deck.receiveShadow = true;
@@ -183,25 +244,12 @@ export class TrophyPlatforms {
 
       const padX = collectionZoneX();
       const padZ = collectionZoneZ(platform.centerZ);
-      this.addCollectionPad(padX, padZ, padMaterial);
       this.addPadLabel(padX, padZ, platform.value);
       this.addAreaLabel(platform.centerZ, platform.area, theme.icon);
     }
   }
 
   /** Flat gold rectangle marking the collection area, flush with the deck. */
-  private addCollectionPad(centerX: number, centerZ: number, material: Material): void {
-    if (!this.padGeometry) return;
-    const pad = new Mesh(this.padGeometry, material);
-    pad.rotation.x = -Math.PI / 2;
-    pad.position.set(centerX, PLATFORM.topY + 0.03, centerZ);
-    this.root.add(pad);
-  }
-
-  /**
-   * "Return" over "+N Wins", floating above the pad. Faces -Z, the direction
-   * players approach from, so it reads without per-frame billboarding.
-   */
   private addPadLabel(centerX: number, centerZ: number, value: number): void {
     if (!this.padLabelGeometry) return;
     const label = this.makeLabelMesh(this.padLabelGeometry, drawPadLabel(value));

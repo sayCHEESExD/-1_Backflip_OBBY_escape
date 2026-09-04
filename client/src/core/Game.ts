@@ -1,4 +1,5 @@
 
+import { AudioEngine } from '../audio/AudioEngine.js';
 import { ThirdPersonCamera } from '../camera/ThirdPersonCamera.js';
 import { clientConfig } from '../config/clientConfig.js';
 import { InputManager } from '../input/InputManager.js';
@@ -10,11 +11,13 @@ import { RemotePlayerManager } from '../player/RemotePlayerManager.js';
 import { ProgressionStore } from '../progression/ProgressionStore.js';
 import { RunController } from '../progression/RunController.js';
 import { ShopController } from '../progression/ShopController.js';
+import { LandingDebris } from '../rendering/LandingDebris.js';
 import { RendererManager } from '../rendering/RendererManager.js';
 import { SceneManager } from '../rendering/SceneManager.js';
 import { DebugOverlay } from '../ui/DebugOverlay.js';
 import { ProgressHud } from '../ui/ProgressHud.js';
 import { AURA_TIERS, TRAIL_TIERS } from '@obby/shared';
+import { AudioControls } from '../ui/AudioControls.js';
 import { CosmeticShop } from '../ui/CosmeticShop.js';
 import { modalLayer } from '../ui/ModalLayer.js';
 import { RebirthPanel } from '../ui/RebirthPanel.js';
@@ -48,6 +51,10 @@ export class Game {
   private readonly treadmillHud: TreadmillHud;
   private readonly trailShop: CosmeticShop;
   private readonly auraShop: CosmeticShop;
+  private readonly audio = new AudioEngine();
+  private readonly audioControls: AudioControls;
+  /** One pooled debris burst shared by every player in the room. */
+  private readonly debris = new LandingDebris();
   private readonly network: NetworkClient;
   private readonly world = new GorgeWorld();
   private readonly run: RunController;
@@ -122,6 +129,13 @@ export class Game {
         equip: (slot) => this.network.equipAura(slot),
       },
     );
+
+    this.audioControls = new AudioControls(container, this.audio, 298);
+    this.sceneManager.scene.add(this.debris.mesh);
+    // A remote landing is reconstructed from replicated `grounded` - it throws
+    // rubble, but deliberately no sound: there is no spatial audio to place it
+    // with, so every distant landing would read as one at the player's feet.
+    this.remotePlayers.onLanded = (x, y, z) => this.debris.burst(x, y, z);
 
     this.renderer.onResize((width, height) => this.camera.setViewport(width, height));
 
@@ -204,6 +218,13 @@ export class Game {
 
       this.camera.setTarget(player.position);
       this.sendTransform(now, player);
+
+      // One landing, one effect. `justLanded` is the simulation's own edge, so
+      // it cannot fire while merely standing.
+      if (player.justLanded) {
+        this.audio.land();
+        this.debris.burst(player.position.x, player.position.y, player.position.z);
+      }
     }
 
     if (player) {
@@ -212,7 +233,9 @@ export class Game {
 
     this.world.bootShop.update(delta);
     this.world.treadmills.update(delta);
+    this.world.winPads.update(delta);
     this.speedPopups.update(delta);
+    this.debris.update(delta);
     this.camera.update(delta);
     this.remotePlayers.update(delta);
 
@@ -223,6 +246,8 @@ export class Game {
 
   start(): void {
     this.input.attach(this.renderer.renderer.domElement);
+    // Audio waits for a real gesture; this only arms the listeners.
+    this.audio.attach();
   }
 
   dispose(): void {
@@ -235,6 +260,9 @@ export class Game {
     this.treadmillHud.dispose();
     this.trailShop.dispose();
     this.auraShop.dispose();
+    this.audioControls.dispose();
+    this.audio.dispose();
+    this.debris.dispose();
     this.world.dispose();
     void this.network.disconnect();
     this.renderer.dispose();

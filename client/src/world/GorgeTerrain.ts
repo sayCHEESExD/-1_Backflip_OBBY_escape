@@ -79,7 +79,18 @@ export class GorgeTerrain {
     this.root.add(water);
   }
 
-  /** Steep tiled slopes rising out of the water, capped by a green rim. */
+  /**
+   * Steep tiled slopes rising out of the water, capped by a green rim.
+   *
+   * The SLOPES start at the gorge mouth. They used to run the whole world, and
+   * a slope crosses platform height at x = 27.9 while the starting headland
+   * reaches x = 33 - so the last five units of bank rose straight up through
+   * the spawn grass as blue shards on both sides. Behind the mouth the
+   * headland IS the terrain, and nothing else belongs there.
+   *
+   * The RIMS still run the full length: they sit at x >= 33, outboard of the
+   * headland, so they flank the start without intersecting it.
+   */
   private buildWalls(textures: WorldTextures, length: number, centerZ: number): void {
     const wallMap = textures.tiles(
       WORLD_COLORS.wallTile,
@@ -88,8 +99,8 @@ export class GorgeTerrain {
     );
     const rise = BANK_WALL.rimY - BANK_WALL.footY;
     const run = BANK_WALL.rimX - BANK_WALL.footX;
-    const slopeLength = Math.hypot(rise, run);
-    wallMap.repeat.set(length * 0.1, slopeLength * 0.14);
+    const slopeFaceLength = Math.hypot(rise, run);
+    wallMap.repeat.set(length * 0.1, slopeFaceLength * 0.14);
 
     const wallMaterial = new MeshLambertMaterial({ map: wallMap });
     this.materials.push(wallMaterial);
@@ -107,9 +118,13 @@ export class GorgeTerrain {
     const midX = (BANK_WALL.footX + BANK_WALL.rimX) / 2;
     const midY = (BANK_WALL.footY + BANK_WALL.rimY) / 2;
 
+    // Only the part of the world that actually has a river in it.
+    const slopeLength = GORGE.horizonZ - GORGE_HEAD.riverStartZ;
+    const slopeCenterZ = (GORGE.horizonZ + GORGE_HEAD.riverStartZ) / 2;
+
     for (const side of [-1, 1] as const) {
       const slope = new Mesh(this.boxGeometry, wallMaterial);
-      slope.scale.set(slopeLength, slabDepth, length);
+      slope.scale.set(slopeFaceLength, slabDepth, slopeLength);
       // Tilt about Z so the slab's TOP face becomes the canyon slope, rising
       // from the waterline out to the rim.
       slope.rotation.z = side * angle;
@@ -121,7 +136,7 @@ export class GorgeTerrain {
       slope.position.set(
         side * (midX + Math.sin(angle) * (slabDepth / 2)),
         midY - Math.cos(angle) * (slabDepth / 2),
-        centerZ,
+        slopeCenterZ,
       );
       slope.receiveShadow = true;
       this.root.add(slope);

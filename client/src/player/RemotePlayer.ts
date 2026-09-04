@@ -18,6 +18,9 @@ const INTERPOLATION_RATE = 12;
  * block another player's run through the obby.
  */
 export class RemotePlayer {
+  /** True on the frame this remote player touched down. */
+  landedThisFrame = false;
+
   readonly sessionId: string;
   readonly character: PlayerCharacter;
 
@@ -84,6 +87,8 @@ export class RemotePlayer {
     this.animationInput.jumpStarted =
       this.wasGrounded && !this.animationInput.grounded;
     this.animationInput.landed = !this.wasGrounded && this.animationInput.grounded;
+    // Reconstructed from replicated `grounded`; nothing extra is sent for it.
+    this.landedThisFrame = this.animationInput.landed;
     this.wasGrounded = this.animationInput.grounded;
 
     // Play at most one queued flip per frame so chained flips stay sequential.

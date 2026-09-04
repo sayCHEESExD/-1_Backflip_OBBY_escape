@@ -74,7 +74,12 @@ export class MouseLook {
     // Dragging works immediately; the lock request may be refused (or delayed
     // by the browser's own cooldown), and look must not break when it is.
     this.dragging = true;
-    void this.canvas?.requestPointerLock?.();
+    // The request rejects on its own promise in sandboxed frames and during
+    // the browser's own lock cooldown. Neither is a fault - drag-to-look is
+    // already active - so it is caught rather than left to surface as an
+    // unhandled rejection.
+    const request = this.canvas?.requestPointerLock?.() as unknown;
+    if (request instanceof Promise) request.catch(() => undefined);
   };
 
   private readonly onMouseUp = (): void => {

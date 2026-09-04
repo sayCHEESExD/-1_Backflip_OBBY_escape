@@ -34,6 +34,8 @@ interface Surface {
   readonly minZ: number;
   readonly maxZ: number;
   readonly topY: number;
+  /** Underside. A platform is solid, so this is what a head hits. */
+  readonly bottomY: number;
 }
 
 /**
@@ -66,6 +68,9 @@ export class WorldCollision {
   /** Maximum drop below a surface that still counts as landing on it. */
   private static readonly LANDING_TOLERANCE = 0.25;
 
+  /** Slack on the head test, so grazing an underside does not snag. */
+  private static readonly CEILING_TOLERANCE = 0.05;
+
   constructor() {
     this.surfaces.push({
       minX: SPAWN_PLATFORM.x - SPAWN_PLATFORM.width / 2,
@@ -73,6 +78,7 @@ export class WorldCollision {
       minZ: SPAWN_PLATFORM.centerZ - SPAWN_PLATFORM.length / 2,
       maxZ: SPAWN_PLATFORM.centerZ + SPAWN_PLATFORM.length / 2,
       topY: SPAWN_PLATFORM.topY,
+      bottomY: SPAWN_PLATFORM.topY - SPAWN_PLATFORM.thickness,
     });
 
     for (const platform of TROPHY_PLATFORMS) {
@@ -82,6 +88,7 @@ export class WorldCollision {
         minZ: platform.centerZ - PLATFORM.length / 2,
         maxZ: platform.centerZ + PLATFORM.length / 2,
         topY: PLATFORM.topY,
+        bottomY: PLATFORM.topY - PLATFORM.thickness,
       });
     }
 
@@ -96,6 +103,7 @@ export class WorldCollision {
         minZ: TREADMILL_ROW.centerZ - TREADMILL_ROW.beltLength / 2,
         maxZ: TREADMILL_ROW.centerZ + TREADMILL_ROW.beltLength / 2,
         topY: TREADMILL_DECK_Y,
+        bottomY: TREADMILL_DECK_Y - TREADMILL_ROW.deckHeight,
       });
     }
   }
@@ -112,6 +120,32 @@ export class WorldCollision {
       if (x < surface.minX - PLAYER_RADIUS || x > surface.maxX + PLAYER_RADIUS) continue;
       if (z < surface.minZ - PLAYER_RADIUS || z > surface.maxZ + PLAYER_RADIUS) continue;
       if (best === null || surface.topY > best) best = surface.topY;
+    }
+    return best;
+  }
+
+  /**
+   * Underside of the lowest platform the player is about to head-butt, or null.
+   *
+   * A platform is a SOLID slab, not a one-way floor. Without this a player
+   * jumping under an island simply passed up through it and out of the top,
+   * which made the whole route climbable from below.
+   *
+   * `previousHeadY` is what keeps it honest: only a slab the player's head was
+   * already BELOW can stop them, so standing on a platform never traps them
+   * under the one they are on.
+   *
+   * Deliberately NOT inflated by the player radius. The ground test inflates so
+   * a player can stand on an edge; inflating a ceiling would instead block them
+   * in mid air beside one.
+   */
+  ceilingYAt(x: number, z: number, previousHeadY: number): number | null {
+    let best: number | null = null;
+    for (const surface of this.surfaces) {
+      if (x < surface.minX || x > surface.maxX) continue;
+      if (z < surface.minZ || z > surface.maxZ) continue;
+      if (previousHeadY > surface.bottomY + WorldCollision.CEILING_TOLERANCE) continue;
+      if (best === null || surface.bottomY < best) best = surface.bottomY;
     }
     return best;
   }

@@ -50,6 +50,9 @@ const SNAP_DISTANCE = 4;
 /** How quickly a small correction is eased away, per second. */
 const CORRECTION_RATE = 14;
 
+const lerp = (from: number, to: number, alpha: number): number =>
+  from + (to - from) * alpha;
+
 /** Shared empty result, so a quiet frame allocates nothing. */
 const EMPTY_INPUTS: MoveMessage[] = [];
 
@@ -92,9 +95,21 @@ export interface AuthoritativeMotion {
 export class LocalPlayer {
   readonly character: PlayerCharacter;
 
-  /** Predicted position, used by the camera and world triggers. */
+  /**
+   * RENDER position: the simulated state interpolated to this exact frame and
+   * carrying the reconciliation offset.
+   *
+   * The camera and the world triggers both read this rather than the raw
+   * simulation, because the raw simulation only advances on 60Hz boundaries.
+   * On a 144Hz display most frames advanced it by nothing and every third
+   * frame by a whole step, which is a stutter the camera then faithfully
+   * reproduced.
+   */
   readonly position = new Vector3();
   readonly velocity = new Vector3();
+
+  /** Simulation state one step behind, for render interpolation. */
+  private readonly previous = { x: 0, y: 0, z: 0 };
 
   private readonly motion: PlayerMotion = createMotion();
   private readonly events = createSimEvents();
@@ -122,6 +137,9 @@ export class LocalPlayer {
     this.collision = collision;
     this.character = new PlayerCharacter();
     this.motion.backflipsRemaining = this.params.backflipCapacity;
+    this.previous.x = this.motion.x;
+    this.previous.y = this.motion.y;
+    this.previous.z = this.motion.z;
     this.syncFromMotion();
     this.syncCharacter();
   }
@@ -136,6 +154,17 @@ export class LocalPlayer {
 
   get isGrounded(): boolean {
     return this.motion.grounded;
+  }
+
+  /**
+   * True on the frame the player touched down.
+   *
+   * The edge the shared simulation already produces, ORed across this frame's
+   * substeps - so it fires once per landing however many steps ran, and never
+   * while merely standing.
+   */
+  get justLanded(): boolean {
+    return this.events.landed;
   }
 
   get animationState(): PlayerAnimationState {
@@ -243,6 +272,9 @@ export class LocalPlayer {
    */
   teleport(x: number, y: number, z: number, rotationY: number): void {
     resetMotion(this.motion, this.params.backflipCapacity, x, y, z, rotationY);
+    this.previous.x = x;
+    this.previous.y = y;
+    this.previous.z = z;
     this.pending.length = 0;
     this.accumulator = 0;
     this.correction.set(0, 0, 0);
@@ -300,10 +332,26 @@ export class LocalPlayer {
     const dx = predictedX - this.motion.x;
     const dy = predictedY - this.motion.y;
     const dz = predictedZ - this.motion.z;
-    if (Math.hypot(dx, dy, dz) > SNAP_DISTANCE) {
+    const snapped = Math.hypot(dx, dy, dz) > SNAP_DISTANCE;
+    if (snapped) {
       this.correction.set(0, 0, 0);
     } else {
       this.correction.set(dx, dy, dz);
+    }
+
+    // The interpolation baseline is deliberately NOT collapsed onto the
+    // replayed state. Replay re-runs the same inputs the client already ran,
+    // so `previous` is still one step behind and interpolation stays
+    // continuous; any real divergence is carried by `correction`, which eases.
+    // Collapsing it here re-based the blend twenty times a second, and every
+    // one of those was a visible tick in the follow.
+    //
+    // A SNAP is the exception: the server put the player somewhere the client
+    // never simulated, so there is no earlier state worth blending from.
+    if (snapped) {
+      this.previous.x = this.motion.x;
+      this.previous.y = this.motion.y;
+      this.previous.z = this.motion.z;
     }
 
     this.syncFromMotion();
@@ -342,6 +390,12 @@ export class LocalPlayer {
 
       const seq = this.nextSeq;
       this.nextSeq += 1;
+
+      // Remember where the step started so the frame can be rendered part-way
+      // between two simulation states instead of snapping between them.
+      this.previous.x = this.motion.x;
+      this.previous.y = this.motion.y;
+      this.previous.z = this.motion.z;
 
       stepPlayer(this.motion, movement, this.params, FIXED_DT, this.collision, this.events);
 
@@ -402,8 +456,22 @@ export class LocalPlayer {
     this.correction.multiplyScalar(Math.exp(-CORRECTION_RATE * delta));
   }
 
+  /**
+   * Resolve the render transform for this frame.
+   *
+   * `alpha` is how far the leftover accumulator has carried us into the NEXT
+   * simulation step, so blending the previous state toward the current one by
+   * it produces continuous motion at any refresh rate. The eased
+   * reconciliation offset is folded in here too, so exactly one transform
+   * exists for the camera, the character and the triggers to agree on.
+   */
   private syncFromMotion(): void {
-    this.position.set(this.motion.x, this.motion.y, this.motion.z);
+    const alpha = Math.min(Math.max(this.accumulator / FIXED_DT, 0), 1);
+    this.position.set(
+      lerp(this.previous.x, this.motion.x, alpha) + this.correction.x,
+      lerp(this.previous.y, this.motion.y, alpha) + this.correction.y,
+      lerp(this.previous.z, this.motion.z, alpha) + this.correction.z,
+    );
     this.velocity.set(this.motion.vx, this.motion.vy, this.motion.vz);
   }
 
@@ -422,13 +490,10 @@ export class LocalPlayer {
   }
 
   private syncCharacter(): void {
-    // The eased correction is applied to the RENDERED transform only; the
-    // simulated position stays exactly what the shared step produced.
-    this.character.setPosition(
-      this.motion.x + this.correction.x,
-      this.motion.y + this.correction.y,
-      this.motion.z + this.correction.z,
-    );
+    // ONE render transform, already interpolated and already carrying the
+    // eased correction. The camera follows the very same vector, so a
+    // correction can never slide the character within the frame.
+    this.character.setPosition(this.position.x, this.position.y, this.position.z);
     this.character.setYaw(this.motion.yaw);
   }
 }

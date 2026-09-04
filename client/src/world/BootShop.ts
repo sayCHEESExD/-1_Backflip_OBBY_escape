@@ -23,6 +23,17 @@ import {
 } from 'three';
 import { WORLD_COLORS } from '../config/worldVisuals.js';
 import { createSneakerGeometry } from '../rendering/SneakerGeometry.js';
+import { SIGN_FRAME_COLOR, SIGN_FRAME_MARGIN, drawSign } from './SignPanel.js';
+
+/** Sign canvas. The mesh is sized to this aspect so the text is not stretched. */
+const SIGN_WIDTH = 1024;
+const SIGN_HEIGHT = 220;
+
+/** Structure, matched to the treadmill bay's kerb and the spawn wall coping. */
+const SHOP_STRUCTURE_COLOR = 0x4a5872;
+const SHOP_COPING_COLOR = 0x8fb7d9;
+const SHOP_WALL_HEIGHT = 8;
+const SHOP_WALL_THICKNESS = 1.6;
 
 /** One pedestal's label, kept so it can be redrawn as Wins change. */
 interface PedestalLabel {
@@ -121,54 +132,126 @@ export class BootShop {
    * Dark backing wall. It also closes the RIGHT side of the starting area -
    * the left and back are walled separately in SpawnArea.
    */
+  /**
+   * The shop's structure, in the same language as the treadmill bay.
+   *
+   * Was a 15-unit black slab running the whole platform: it read as an
+   * unfinished wall and it ran straight through the gorge-mouth wall at the
+   * front. Now it is a wall the height of the spawn walls, in the bay kerb
+   * colour, capped with the same coping course and ended with the same posts -
+   * and it stops at the pedestal row instead of crossing the whole start.
+   */
   private buildBackdrop(): void {
-    const geometry = new BoxGeometry(1.6, 15, SPAWN_PLATFORM.length);
-    const material = new MeshLambertMaterial({ color: 0x2f4a63 });
+    const rowLength = (BOOT_TIERS.length - 1) * BOOT_SHOP.spacingZ;
+    const centerZ = BOOT_SHOP.firstZ + rowLength / 2;
+    const length = rowLength + 8;
+    const height = SHOP_WALL_HEIGHT;
+
+    const geometry = new BoxGeometry(SHOP_WALL_THICKNESS, height, length);
+    const material = new MeshLambertMaterial({ color: SHOP_STRUCTURE_COLOR });
     this.geometries.push(geometry);
     this.materials.push(material);
 
     const wall = new Mesh(geometry, material);
-    wall.position.set(BOOT_SHOP.wallX, SPAWN_PLATFORM.topY + 7.5, SPAWN_PLATFORM.centerZ);
+    wall.position.set(BOOT_SHOP.wallX, SPAWN_PLATFORM.topY + height / 2, centerZ);
     wall.receiveShadow = true;
+    wall.castShadow = true;
     this.root.add(wall);
+
+    // Coping course, matching the spawn walls.
+    const capGeometry = new BoxGeometry(SHOP_WALL_THICKNESS + 0.5, 0.55, length + 0.5);
+    const capMaterial = new MeshLambertMaterial({ color: SHOP_COPING_COLOR });
+    this.geometries.push(capGeometry);
+    this.materials.push(capMaterial);
+
+    const cap = new Mesh(capGeometry, capMaterial);
+    cap.position.set(BOOT_SHOP.wallX, SPAWN_PLATFORM.topY + height + 0.275, centerZ);
+    this.root.add(cap);
+
+    // End posts, matching the bay's divider posts.
+    const postGeometry = new BoxGeometry(
+      SHOP_WALL_THICKNESS + 1,
+      height + 1.2,
+      SHOP_WALL_THICKNESS + 1,
+    );
+    this.geometries.push(postGeometry);
+    for (const end of [-1, 1] as const) {
+      const post = new Mesh(postGeometry, capMaterial);
+      post.position.set(
+        BOOT_SHOP.wallX,
+        SPAWN_PLATFORM.topY + (height + 1.2) / 2,
+        centerZ + (end * length) / 2,
+      );
+      post.castShadow = true;
+      this.root.add(post);
+    }
+
+    // A divider between neighbouring pedestals, as in the treadmill bay.
+    const dividerGeometry = new BoxGeometry(0.45, 2.1, 0.45);
+    this.geometries.push(dividerGeometry);
+    for (let i = 0; i <= BOOT_TIERS.length; i += 1) {
+      const z = BOOT_SHOP.firstZ + (i - 0.5) * BOOT_SHOP.spacingZ;
+      const divider = new Mesh(dividerGeometry, capMaterial);
+      divider.position.set(BOOT_SHOP.x + 1.9, SPAWN_PLATFORM.topY + 1.05, z);
+      divider.castShadow = true;
+      this.root.add(divider);
+    }
   }
 
-  /** The glowing green "Win Shop" sign. */
+  /**
+   * The "Win Shop" sign, in the same treatment as the Train Speed banner.
+   *
+   * Was a flat green slab with text floating in front of it; it now shares the
+   * house sign panel and the same dark frame, so the two signs read as part of
+   * one place rather than two unrelated props.
+   */
   private buildSign(): void {
     const rowLength = (BOOT_TIERS.length - 1) * BOOT_SHOP.spacingZ;
     const centerZ = BOOT_SHOP.firstZ + rowLength / 2;
 
-    const panelGeometry = new BoxGeometry(0.5, 5, rowLength * 0.8);
-    const panelMaterial = new MeshBasicMaterial({ color: 0x3ddc4a });
-    this.geometries.push(panelGeometry);
-    this.materials.push(panelMaterial);
+    const panelLength = rowLength * 0.82;
+    const panelHeight = panelLength * (SIGN_HEIGHT / SIGN_WIDTH);
+    const y = SPAWN_PLATFORM.topY + BOOT_SHOP.signY;
 
-    const panel = new Mesh(panelGeometry, panelMaterial);
-    panel.position.set(BOOT_SHOP.wallX + 1.0, SPAWN_PLATFORM.topY + BOOT_SHOP.signY, centerZ);
-    this.root.add(panel);
+    // Frame: a slab a little larger than the panel, matching the banner's.
+    const frameGeometry = new BoxGeometry(
+      0.4,
+      panelHeight + SIGN_FRAME_MARGIN,
+      panelLength + SIGN_FRAME_MARGIN,
+    );
+    const frameMaterial = new MeshLambertMaterial({ color: SIGN_FRAME_COLOR });
+    this.geometries.push(frameGeometry);
+    this.materials.push(frameMaterial);
 
-    const textGeometry = new PlaneGeometry(rowLength * 0.76, 4.0);
-    this.planes.push(textGeometry);
+    const frame = new Mesh(frameGeometry, frameMaterial);
+    frame.position.set(BOOT_SHOP.wallX + 1.05, y, centerZ);
+    this.root.add(frame);
 
-    const texture = new CanvasTexture(drawSign());
+    const texture = new CanvasTexture(
+      drawSign('Win Shop', { icon: '🏆', width: SIGN_WIDTH, height: SIGN_HEIGHT }),
+    );
     texture.colorSpace = SRGBColorSpace;
-    const textMaterial = new MeshBasicMaterial({
+    // The sign never changes, so it is not registered for redraws - but its
+    // texture still needs disposing.
+    this.signTexture = texture;
+
+    const panelGeometry = new PlaneGeometry(panelLength, panelHeight);
+    this.planes.push(panelGeometry);
+
+    const panelMaterial = new MeshBasicMaterial({
       map: texture,
       transparent: true,
       side: DoubleSide,
       depthWrite: false,
       fog: false,
     });
-    this.materials.push(textMaterial);
-    // The sign never changes, so it is not registered for redraws - but its
-    // texture still needs disposing.
-    this.signTexture = texture;
+    this.materials.push(panelMaterial);
 
-    const text = new Mesh(textGeometry, textMaterial);
-    text.position.set(BOOT_SHOP.wallX + 1.35, SPAWN_PLATFORM.topY + BOOT_SHOP.signY, centerZ);
+    const panel = new Mesh(panelGeometry, panelMaterial);
+    panel.position.set(BOOT_SHOP.wallX + 1.3, y, centerZ);
     // Face +X, into the walkable side of the platform.
-    text.rotation.y = Math.PI / 2;
-    this.root.add(text);
+    panel.rotation.y = Math.PI / 2;
+    this.root.add(panel);
   }
 
   private buildPedestals(): void {
@@ -316,19 +399,3 @@ const drawPedestalLabel = (
 };
 
 /** The trophy + "Win Shop" sign face. */
-const drawSign = (): HTMLCanvasElement => {
-  const canvas = document.createElement('canvas');
-  canvas.width = 1024;
-  canvas.height = 256;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return canvas;
-
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-
-  ctx.font = '120px "Segoe UI Emoji", "Apple Color Emoji", system-ui, sans-serif';
-  ctx.fillText('🏆', 250, 128);
-
-  outlined(ctx, 'Win Shop', 590, 128, 'bold 130px system-ui, sans-serif', '#ffffff', 14);
-  return canvas;
-};

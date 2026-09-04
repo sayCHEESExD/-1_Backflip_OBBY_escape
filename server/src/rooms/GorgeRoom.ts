@@ -46,6 +46,7 @@ const MAX_CLIENTS = 24;
  */
 const AUTOSAVE_SECONDS = 15;
 
+
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
@@ -192,6 +193,14 @@ export class GorgeRoom extends Room<GorgeState> {
    *
    * The backflip COUNT is validated here rather than trusted, because how many
    * flips a player may perform is gameplay, and gameplay is server-owned.
+   */
+  /**
+   * Consume one client INPUT and advance the authoritative simulation.
+   *
+   * The message carries no transform, so there is nothing here that lets a
+   * client assert where it is. Position, velocity, rotation, grounded and
+   * backflip state are all produced by `MovementService` from the shared
+   * simulation and then replicated back.
    */
   /**
    * Consume one client INPUT and advance the authoritative simulation.

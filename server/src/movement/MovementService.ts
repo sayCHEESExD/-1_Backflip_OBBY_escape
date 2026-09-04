@@ -248,11 +248,6 @@ export class MovementService {
     );
   }
 
-  /** Edges the last simulated step produced. */
-  eventsOf(sessionId: string): SimEvents | undefined {
-    return this.sims.get(sessionId)?.events;
-  }
-
   /** Snapshot motion into a scratch object, for callers that need a copy. */
   snapshot(sessionId: string, into: PlayerMotion): boolean {
     const sim = this.sims.get(sessionId);

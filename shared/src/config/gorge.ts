@@ -198,8 +198,18 @@ export interface TrophyPlatform {
 export const COLLECTION_ZONE = {
   /** Extent along X. */
   width: 5,
-  /** Extent along Z. */
-  depth: 5,
+  /**
+   * Extent along Z: the FULL length of the island.
+   *
+   * The pad used to be a 5x5 square that a player could miss by landing a
+   * couple of units long. As a strip running the island end to end it reads as
+   * the left-hand lane of every island, and anywhere on that lane banks the
+   * reward. The trigger is built from this same number, so the visible strip
+   * and the collectable area cannot disagree.
+   */
+  get depth(): number {
+    return PLATFORM.length;
+  },
   /**
    * Offset from the island centre along X.
    *
@@ -211,10 +221,11 @@ export const COLLECTION_ZONE = {
    */
   offsetX: 8,
   /**
-   * Offset from the island centre along Z, slightly forward of centre so a
-   * player who has just cleared a hazard lands on the pad rather than past it.
+   * Offset from the island centre along Z.
+   *
+   * Zero: the strip spans the whole island, so it is centred by definition.
    */
-  offsetZ: 2,
+  offsetZ: 0,
   /** Height of the trigger volume above the platform surface. */
   height: 4,
   /** Height of the floating label above the platform surface. */
@@ -328,12 +339,20 @@ export const GORGE = {
  * positive X ("far left"), so the shop faces them from the opposite side.
  */
 export const BOOT_SHOP = {
-  /** X of the pedestal row. */
-  x: -10,
+  /**
+   * X of the pedestal row, out at the RIGHT-HAND corner of the start.
+   *
+   * The shop used to sit at -10, close enough to the gorge mouth that its
+   * backdrop doubled as the right-hand play boundary and squeezed the open
+   * floor. Pushed out to the corner it frames the start instead of dividing
+   * it, and the walkable area widens with it - the right limit is derived from
+   * `wallX`, so moving the shop moves the boundary.
+   */
+  x: -21,
   /** X of the backing wall and sign, just outside the walkable channel. */
-  wallX: -14.5,
+  wallX: -25.5,
   /** Z of the first pedestal, and the spacing between them. */
-  firstZ: -15,
+  firstZ: -18,
   spacingZ: 5,
   /** How close the player must get to a pedestal to buy its boot. */
   pickupRadius: 2.4,
@@ -399,19 +418,44 @@ const platformZ = (index: number): number => TROPHY_PLATFORMS[index]?.centerZ ??
 /**
  * Heights of the three rows in a stacked column.
  *
- * The spacing is a hard constraint, not taste. The hit test treats the player
- * as a box PLAYER_HEIGHT (3.2) tall, and each line is REDLINE_RADIUS thick, so
- * threading between two rows needs more than 3.64 units of clear air. 4.8 apart
- * leaves 4.36 - a real but passable window, reachable by the chained-flip arc
- * that crosses these gaps in the first place.
+ * The rows are now a TIGHT BAND, 2.4 apart. That is deliberately below the
+ * threading threshold: the hit test treats the player as a box PLAYER_HEIGHT
+ * (3.2) tall and each line is REDLINE_RADIUS thick, so squeezing between two
+ * rows needs more than 3.64 units of clear air and 2.4 does not offer it.
+ *
+ * The obstacle therefore has ONE answer instead of three - clear the whole
+ * band, feet above 6.32 - which is what makes it read as a single wall to fly
+ * over rather than a lattice to thread. Chained flips already peak at 3.8,
+ * 5.8 and 8.9, so two flips carry a player over it.
+ *
+ * Widening the spacing back past 3.64 would silently re-open the gaps between
+ * rows; that is the number to check before changing these.
  */
-const ROW_HEIGHTS = [1.4, 6.2, 11] as const;
+const ROW_HEIGHTS = [1.3, 3.7, 6.1] as const;
 
 /** Height of a lone line: low enough to jump, high enough to read. */
 const SINGLE_ROW_Y = 3.6;
 
 /** Heights used when a gap carries two separate lines. */
 const PAIR_HEIGHTS = [2.2, 7] as const;
+
+/**
+ * First island the hazard ramp starts after - the +10 island.
+ *
+ * Everything before it is the tutorial run and stays clear.
+ */
+const FIRST_HAZARD_ISLAND = 3;
+
+/**
+ * Columns in the endgame pattern, for the first gap past the +100.
+ *
+ * It creeps up by one every `ENDGAME_COLUMN_STRIDE` gaps and stops at
+ * `ENDGAME_MAX_COLUMNS`, so the deepest islands carry a little more to fly
+ * through without ever becoming a wall of lines.
+ */
+const ENDGAME_COLUMNS = 3;
+const ENDGAME_COLUMN_STRIDE = 8;
+const ENDGAME_MAX_COLUMNS = 5;
 
 const line = (z: number, y: number): Redline => ({
   z,
@@ -455,28 +499,47 @@ const buildRedlines = (): readonly Redline[] => {
     for (const y of ROW_HEIGHTS) lines.push(line(z, y));
   };
 
-  // +10 -> +15: exactly one line, at the dead centre of the gap.
-  lines.push(line(gapCentre(3, 4), SINGLE_ROW_Y));
+  // The ramp runs from the +10 island. Everything before it stays clean, so
+  // the opening of the route is never gated on threading a hazard.
+  for (let before = FIRST_HAZARD_ISLAND; before < TROPHY_PLATFORMS.length - 1; before += 1) {
+    const after = before + 1;
+    const centre = gapCentre(before, after);
+    const length = gapLength(before, after);
+    const step = before - FIRST_HAZARD_ISLAND;
 
-  // +15 -> +25: two lines, spaced a third of the gap apart.
-  {
-    const centre = gapCentre(4, 5);
-    const offset = gapLength(4, 5) / 6;
-    PAIR_HEIGHTS.forEach((y, i) => {
-      lines.push(line(centre + (i === 0 ? -offset : offset), y));
-    });
-  }
+    if (step === 0) {
+      // A single line, at the dead centre of the gap.
+      lines.push(line(centre, SINGLE_ROW_Y));
+      continue;
+    }
 
-  // +25 -> +35, +35 -> +45 and +45 -> +100: one three-row column each.
-  column(gapCentre(5, 6));
-  column(gapCentre(6, 7));
-  column(gapCentre(7, 8));
+    if (step === 1) {
+      // Two lines at different heights, a third of the gap apart.
+      const offset = length / 6;
+      PAIR_HEIGHTS.forEach((y, i) => {
+        lines.push(line(centre + (i === 0 ? -offset : offset), y));
+      });
+      continue;
+    }
 
-  // +100 -> Space Island: three columns of three rows.
-  {
-    const centre = gapCentre(8, 9);
-    const spacing = gapLength(8, 9) / 4;
-    for (const step of [-1, 0, 1]) column(centre + step * spacing);
+    if (step < 5) {
+      // One three-row column.
+      column(centre);
+      continue;
+    }
+
+    // From the +100 island on, the endgame pattern: three columns of three
+    // rows, spread evenly across the gap. It REPEATS rather than escalating
+    // with the gap - the gaps out here run to two thousand units, and holding
+    // the hazard count while the spacing grows keeps each column a gate the
+    // player threads rather than a wall of lines no arc could pass.
+    const columns = Math.min(
+      ENDGAME_MAX_COLUMNS,
+      ENDGAME_COLUMNS + Math.floor((step - 5) / ENDGAME_COLUMN_STRIDE),
+    );
+    const spacing = length / (columns + 1);
+    const first = -(columns - 1) / 2;
+    for (let i = 0; i < columns; i += 1) column(centre + (first + i) * spacing);
   }
 
   return lines;

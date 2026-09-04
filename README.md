@@ -113,6 +113,46 @@ Assets are served straight out of the repo-level `assets/` folder via Vite's
 
 ## Current milestone
 
+**Milestone 13 — camera stability and map defect fixes.**
+
+1. **Camera vibration removed at source.** The renderer ran at 144Hz over a
+   60Hz simulation with no interpolation, the camera followed the raw
+   simulated position while the character rendered at a corrected one, and the
+   camera smoothed its position but not its look target. Now there is one
+   interpolated render transform that everything reads, and the camera smooths
+   only the point it follows. Measured over walk/jump/land/strafe: direction
+   flips 26 → 1, worst single-frame step 0.68 → 0.08.
+2. **Stacked redlines tightened** from 4.8 to 2.4 apart — one band to clear
+   rather than a lattice to thread. Pattern, count and gaps unchanged.
+3. **Z-fighting fixed geometrically**: island bodies stop where their decks
+   begin, and the spawn grass is cut into four slabs around the treadmill bay.
+4. **Boot Shop wall** rebuilt in the treadmill bay's structural language.
+5. **Mouth walls** now stop at the side wall's inner face instead of burying
+   two units of themselves inside it.
+6. **Win areas run the island's full length** on Z; the trigger is built from
+   the same number, so the whole strip collects.
+
+### Previous milestone
+
+**Milestone 12 — map and layout polish.**
+
+1. **Redlines run the whole route.** 201 lines across all 26 hazard gaps, using
+   the existing pattern: 1 / 2 / three single columns / then three columns of
+   three rows repeated to the end. None sit on an island, and every line still
+   spans to the bank at its own height.
+2. **Win Shop moved to the right-hand corner** (x -10 → -21). The walkable
+   right limit is derived from its wall, so the open floor widened with it.
+3. **The start reads as built**: coping courses along every wall top, corner
+   posts at the corners and either side of the gorge mouth, and a rock ledge
+   stepping out below the headland grass.
+4. **Win pads rebuilt** to the reference — a framed chequered slab with gold
+   trophies stood on it, consistent across all 30 islands.
+5. **Treadmill bay** — inlaid tiled floor, kerb on three sides, divider posts
+   between machines and a "Train Speed" banner over the row. Tiers, colours,
+   effects and interaction untouched.
+
+### Previous milestone
+
 **Milestone 11 — reference UI, mouse-look camera, the deep-space run.**
 
 1. **UI restyled to the references.** The three launchers are now square rail
