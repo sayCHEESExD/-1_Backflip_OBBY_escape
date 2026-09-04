@@ -29,17 +29,5 @@ export const PROGRESSION: ProgressionConfig = {
   treadmillProgressionPerSecond: 0.5,
 };
 
-/**
- * Boots multiply progression gained per step. Data-driven so tiers can be
- * added without touching gameplay code.
- */
-export interface BootTier {
-  readonly id: string;
-  readonly name: string;
-  /** Multiplier applied to baseProgressionPerStep. */
-  readonly progressionMultiplier: number;
-}
-
-export const BOOT_TIERS: readonly BootTier[] = [
-  { id: 'default', name: 'Bare Feet', progressionMultiplier: 1 },
-];
+// Boots live in `config/boots.ts` - they set Speed per step outright rather
+// than multiplying a separate progression stat.

@@ -58,6 +58,22 @@ export interface PlayerProgression {
   backflips: number;
   /** Trophy wins collected. Awarded by the server only. */
   wins: number;
+  /**
+   * Lifetime Speed farmed by moving. The progression currency: crossing each
+   * level threshold grants one more backflip. Awarded by the server only.
+   */
+  totalSpeed: number;
+  /** Slot of the currently equipped boot - the best one owned. */
+  bootSlot: number;
+  /** Bitmask of boots bought, one bit per slot. */
+  ownedBoots: number;
+  /**
+   * Authoritative movement multiplier, resolved by the server from level,
+   * rebirth and (later) boots. The client moves at exactly this.
+   */
+  moveMultiplier: number;
+  /** Highest level reachable at the current rebirth. */
+  maxLevel: number;
 }
 
 /** Everything the client knows about a replicated player. */

@@ -1,68 +1,141 @@
 import {
   BACKFLIP,
   MOVEMENT,
-  SPAWN_POSITION,
-  SPAWN_ROTATION_Y,
+  WorldCollision,
+  copyMotion,
+  createMotion,
+  createSimEvents,
+  horizontalSpeed,
+  resetMotion,
+  stepPlayer,
+  type MoveMessage,
+  type MovementInput,
   type PlayerAnimationState,
+  type PlayerMotion,
   type PlayerMotionState,
+  type SimParams,
 } from '@obby/shared';
 import { Vector3 } from 'three';
 import { createAnimationInput, type AnimationInput } from '../animation/AnimationInput.js';
 import type { InputState } from '../input/InputState.js';
-import type { GorgeCollision } from '../world/GorgeCollision.js';
 import { PlayerCharacter } from './PlayerCharacter.js';
 
-const MOVE_DIRECTION = new Vector3();
+/** Inputs kept for re-simulation. Older ones are dropped as the server acks. */
+const MAX_PENDING_INPUTS = 240;
 
 /**
- * The locally controlled player.
+ * Fixed simulation timestep, in seconds.
  *
- * Movement is simulated here and reported to the server. Animation is derived
- * from this simulation but never feeds back into it: the animator receives a
- * read-only snapshot, and nothing in the animation pipeline can change
- * position or velocity. A backflip in particular leaves horizontal velocity
- * completely untouched - the jump arc is identical whether or not the player
- * flips.
+ * The client steps - and SENDS - at exactly this cadence regardless of render
+ * frame rate. That matters for authority: every simulated step has to reach
+ * the server, or the server falls behind and its authoritative position lags
+ * the player's. A fixed step also bounds the message rate on a high-refresh
+ * display and makes the two simulations bit-comparable.
+ */
+const FIXED_DT = 1 / 60;
+
+/** Most steps one render frame may run, so a stall cannot spiral. */
+const MAX_STEPS_PER_FRAME = 5;
+
+/**
+ * Position error above which prediction snaps instead of easing.
+ *
+ * Small corrections are blended into the render position so ordinary
+ * disagreement is invisible; a large one means the server did something the
+ * client could not predict - a respawn, a rejected input - and should be shown
+ * immediately rather than slid to.
+ */
+const SNAP_DISTANCE = 4;
+
+/** How quickly a small correction is eased away, per second. */
+const CORRECTION_RATE = 14;
+
+/** Shared empty result, so a quiet frame allocates nothing. */
+const EMPTY_INPUTS: MoveMessage[] = [];
+
+/** One unacknowledged input, kept so it can be replayed after a correction. */
+interface PendingInput {
+  seq: number;
+  dt: number;
+  input: MovementInput;
+}
+
+/** The authoritative fields the client reconciles against. */
+export interface AuthoritativeMotion {
+  x: number;
+  y: number;
+  z: number;
+  rotationY: number;
+  velocityX: number;
+  velocityY: number;
+  velocityZ: number;
+  grounded: boolean;
+  flipCount: number;
+  flipsRemaining: number;
+  lastInputSeq: number;
+  /** Treadmill the server has the player running on, or 0. */
+  treadmillTier: number;
+}
+
+/**
+ * The locally controlled player: a PREDICTION of a server-owned simulation.
+ *
+ * The server is authoritative. This class runs the identical `stepPlayer` from
+ * shared so the character responds instantly, keeps every input the server has
+ * not acknowledged, and on each server update snaps to the authoritative state
+ * and replays those inputs. Because both sides run the same function, replay
+ * converges instead of fighting.
+ *
+ * Nothing here writes a transform to the network - the only thing sent is the
+ * input that produced this frame.
  */
 export class LocalPlayer {
   readonly character: PlayerCharacter;
 
-  readonly position = new Vector3(SPAWN_POSITION.x, SPAWN_POSITION.y, SPAWN_POSITION.z);
+  /** Predicted position, used by the camera and world triggers. */
+  readonly position = new Vector3();
   readonly velocity = new Vector3();
 
-  private yaw = SPAWN_ROTATION_Y;
-  private grounded = true;
-  private jumpLatched = false;
+  private readonly motion: PlayerMotion = createMotion();
+  private readonly events = createSimEvents();
+  private readonly replayEvents = createSimEvents();
+  private readonly collision: WorldCollision;
+  private readonly params: SimParams = {
+    moveMultiplier: 1,
+    backflipCapacity: 1,
+    maxTreadmillTier: 1,
+  };
 
-  /** Server-authoritative allowance of flips per airborne window. */
-  private backflipCapacity = BACKFLIP.defaultCapacity;
-  /** Flips still available before touching the ground again. */
-  private backflipsRemaining = BACKFLIP.defaultCapacity;
-  /** Monotonic count of flips STARTED; replicated so remotes can mirror them. */
-  private flipCount = 0;
-  /** Flips performed since leaving the ground. Drives the escalating lift. */
-  private flipsThisAirtime = 0;
+  private readonly pending: PendingInput[] = [];
+  private nextSeq = 1;
+  /** Inputs simulated but not yet handed to the network. */
+  private readonly outgoing: MoveMessage[] = [];
+  /** Leftover render time not yet consumed by a fixed step. */
+  private accumulator = 0;
+
+  /** Render-space offset that eases a small correction away. */
+  private readonly correction = new Vector3();
 
   private readonly animationInput: AnimationInput = createAnimationInput();
-  private readonly collision: GorgeCollision;
 
-  constructor(collision: GorgeCollision) {
+  constructor(collision: WorldCollision) {
     this.collision = collision;
     this.character = new PlayerCharacter();
+    this.motion.backflipsRemaining = this.params.backflipCapacity;
+    this.syncFromMotion();
     this.syncCharacter();
   }
 
-  /** Horizontal speed in world units per second. Jump distance follows from it. */
   get horizontalSpeed(): number {
-    return Math.hypot(this.velocity.x, this.velocity.z);
+    return horizontalSpeed(this.motion);
   }
 
   get rotationY(): number {
-    return this.yaw;
+    return this.motion.yaw;
   }
 
   get isGrounded(): boolean {
-    return this.grounded;
+    return this.motion.grounded;
   }
 
   get animationState(): PlayerAnimationState {
@@ -71,7 +144,12 @@ export class LocalPlayer {
 
   /** Flips the player may still perform before landing. */
   get flipsRemaining(): number {
-    return this.backflipsRemaining;
+    return this.motion.backflipsRemaining;
+  }
+
+  /** Total flips allowed per airborne window - equal to the player's level. */
+  get flipCapacity(): number {
+    return this.params.backflipCapacity;
   }
 
   /** Flips currently in flight - distinct from how many are available. */
@@ -79,222 +157,278 @@ export class LocalPlayer {
     return this.character.animator.isFlipping ? this.character.animator.flipIndex : 0;
   }
 
-  /** Compact motion state for replication. No bone data is ever sent. */
+  /** Compact motion state, for diagnostics only - never sent. */
   get motionState(): PlayerMotionState {
     return {
       speed: this.horizontalSpeed,
-      verticalVelocity: this.velocity.y,
-      grounded: this.grounded,
-      flipCount: this.flipCount,
+      verticalVelocity: this.motion.vy,
+      grounded: this.motion.grounded,
+      flipCount: this.motion.flipCount,
     };
   }
 
   /**
-   * Apply the server's flip allowance. Availability is gameplay state and is
-   * owned by the server; the client only mirrors it.
+   * Take the inputs simulated since the last call.
+   *
+   * Every one must be sent: the server advances only by the inputs it
+   * receives, so a dropped input is authoritative movement that never happens.
    */
+  drainOutgoing(): MoveMessage[] {
+    if (this.outgoing.length === 0) return EMPTY_INPUTS;
+    const batch = this.outgoing.slice();
+    this.outgoing.length = 0;
+    return batch;
+  }
+
+  get movementMultiplier(): number {
+    return this.params.moveMultiplier;
+  }
+
+  /** Actual sprint speed in world units per second. */
+  get maxRunSpeed(): number {
+    return MOVEMENT.runSpeed * this.params.moveMultiplier;
+  }
+
+  /** Show the boot the server says this player has equipped. Cosmetic only. */
+  setBootSlot(slot: number): void {
+    this.character.boots.setSlot(slot);
+  }
+
+  /** Show the trail and aura the server says this player has equipped. */
+  setCosmetics(trailSlot: number, auraSlot: number): void {
+    this.character.setCosmetics(trailSlot, auraSlot);
+  }
+
+  /**
+   * Apply the server's movement multiplier.
+   *
+   * Resolved server-side from level and rebirth; prediction uses it so the
+   * client simulates at exactly the authoritative speed.
+   */
+  setMoveMultiplier(multiplier: number): void {
+    if (!Number.isFinite(multiplier) || multiplier <= 0) return;
+    this.params.moveMultiplier = multiplier;
+  }
+
+  /**
+   * Apply the server's treadmill gate.
+   *
+   * Prediction uses it so stepping onto a machine feels instant, but the
+   * server re-derives it from its own rebirth count every step - predicting a
+   * tier the player has not unlocked would simply be corrected away.
+   */
+  setMaxTreadmillTier(tier: number): void {
+    if (!Number.isFinite(tier)) return;
+    this.params.maxTreadmillTier = Math.max(0, Math.floor(tier));
+  }
+
+  /** Treadmill the player is running on, or 0. */
+  get treadmillTier(): number {
+    return this.motion.treadmillTier;
+  }
+
+  /** Apply the server's flip allowance. */
   setBackflipCapacity(capacity: number): void {
     const clamped = Math.max(0, Math.min(capacity, BACKFLIP.maxCapacity));
-    if (clamped === this.backflipCapacity) return;
-    this.backflipCapacity = clamped;
-    if (this.grounded) this.backflipsRemaining = clamped;
+    if (clamped === this.params.backflipCapacity) return;
+    this.params.backflipCapacity = clamped;
+    if (this.motion.grounded) this.motion.backflipsRemaining = clamped;
   }
 
-  /** Snap to a transform, e.g. on a server-issued respawn. */
+  /**
+   * Snap the prediction to an authoritative transform.
+   *
+   * Used for a server respawn: pending inputs are abandoned because they
+   * described a run that no longer exists.
+   */
   teleport(x: number, y: number, z: number, rotationY: number): void {
-    this.position.set(x, y, z);
-    this.velocity.set(0, 0, 0);
-    this.yaw = rotationY;
-    this.grounded = true;
-    this.backflipsRemaining = this.backflipCapacity;
-    this.flipsThisAirtime = 0;
+    resetMotion(this.motion, this.params.backflipCapacity, x, y, z, rotationY);
+    this.pending.length = 0;
+    this.accumulator = 0;
+    this.correction.set(0, 0, 0);
     this.character.resetAnimation();
+    this.syncFromMotion();
     this.syncCharacter();
   }
 
   /**
-   * Advance one frame.
+   * Reconcile against the server's authoritative state.
+   *
+   * Snaps to what the server simulated, discards inputs it has already
+   * consumed, and replays the rest so the prediction lands back where the
+   * player expects to be.
+   */
+  reconcile(state: AuthoritativeMotion): void {
+    const predictedX = this.motion.x;
+    const predictedY = this.motion.y;
+    const predictedZ = this.motion.z;
+
+    this.motion.x = state.x;
+    this.motion.y = state.y;
+    this.motion.z = state.z;
+    this.motion.vx = state.velocityX;
+    this.motion.vy = state.velocityY;
+    this.motion.vz = state.velocityZ;
+    this.motion.yaw = state.rotationY;
+    this.motion.grounded = state.grounded;
+    this.motion.flipCount = state.flipCount;
+    this.motion.backflipsRemaining = state.flipsRemaining;
+    this.motion.treadmillTier = state.treadmillTier;
+
+    // Drop everything the server has already simulated, then replay the rest.
+    let kept = 0;
+    for (const entry of this.pending) {
+      if (entry.seq <= state.lastInputSeq) continue;
+      this.pending[kept] = entry;
+      kept += 1;
+    }
+    this.pending.length = kept;
+
+    for (const entry of this.pending) {
+      stepPlayer(
+        this.motion,
+        entry.input,
+        this.params,
+        entry.dt,
+        this.collision,
+        this.replayEvents,
+      );
+    }
+
+    // Carry the visible difference as an offset and ease it away, so a small
+    // correction does not read as a teleport.
+    const dx = predictedX - this.motion.x;
+    const dy = predictedY - this.motion.y;
+    const dz = predictedZ - this.motion.z;
+    if (Math.hypot(dx, dy, dz) > SNAP_DISTANCE) {
+      this.correction.set(0, 0, 0);
+    } else {
+      this.correction.set(dx, dy, dz);
+    }
+
+    this.syncFromMotion();
+    this.syncCharacter();
+  }
+
+  /**
+   * Advance the prediction and record the inputs for the server.
+   *
+   * Simulation runs on a FIXED timestep so client and server take identical
+   * steps; a render frame may therefore produce zero, one or several inputs.
+   * Animation is still updated once per render frame with the real delta.
    *
    * @param input     normalised input snapshot
-   * @param cameraYaw yaw the camera is facing, so movement is camera-relative
+   * @param cameraYaw yaw the camera faces, so movement is camera-relative
    */
   update(delta: number, input: Readonly<InputState>, cameraYaw: number): void {
-    const wasGrounded = this.grounded;
+    this.accumulator += Math.max(0, delta);
 
-    this.animationInput.jumpStarted = false;
-    this.animationInput.landed = false;
-    this.animationInput.backflipRequested = false;
+    let steps = 0;
+    let jumpStarted = false;
+    let landed = false;
+    let backflipRequested = false;
 
-    this.applyActions(input);
-    this.applyHorizontal(delta, input, cameraYaw);
-    this.velocity.y -= MOVEMENT.gravity * delta;
+    while (this.accumulator >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
+      this.accumulator -= FIXED_DT;
+      steps += 1;
 
-    const previousY = this.position.y;
-    this.position.addScaledVector(this.velocity, delta);
+      const movement: MovementInput = {
+        moveX: input.moveX,
+        moveZ: input.moveZ,
+        jump: input.jump,
+        sprint: input.sprint,
+        cameraYaw,
+      };
 
-    // Invisible boundary: the banks are scenery and can never be reached.
-    this.position.x = this.collision.clampToChannel(this.position.x);
+      const seq = this.nextSeq;
+      this.nextSeq += 1;
 
-    this.resolveGround(previousY);
+      stepPlayer(this.motion, movement, this.params, FIXED_DT, this.collision, this.events);
 
-    if (!wasGrounded && this.grounded) {
-      this.animationInput.landed = true;
-      this.backflipsRemaining = this.backflipCapacity;
-      this.flipsThisAirtime = 0;
+      // Edges from every substep must survive to the animator, or a jump that
+      // happened in an early substep would be silently dropped.
+      jumpStarted = jumpStarted || this.events.jumpStarted;
+      landed = landed || this.events.landed;
+      backflipRequested = backflipRequested || this.events.backflipRequested;
+
+      this.pending.push({ seq, dt: FIXED_DT, input: movement });
+      if (this.pending.length > MAX_PENDING_INPUTS) this.pending.shift();
+
+      this.outgoing.push({
+        seq,
+        dt: FIXED_DT,
+        moveX: movement.moveX,
+        moveZ: movement.moveZ,
+        jump: movement.jump,
+        sprint: movement.sprint,
+        cameraYaw,
+      });
     }
 
+    // A long stall would otherwise leave a huge backlog to chew through.
+    if (this.accumulator > FIXED_DT * MAX_STEPS_PER_FRAME) this.accumulator = 0;
+
+    this.events.jumpStarted = jumpStarted;
+    this.events.landed = landed;
+    this.events.backflipRequested = backflipRequested;
+
+    this.decayCorrection(delta);
+    this.syncFromMotion();
     this.syncCharacter();
     this.updateAnimation(delta);
-  }
-
-  /**
-   * Jump and backflip both come from the jump control: pressing it on the
-   * ground jumps, pressing it again in the air spends one available flip.
-   * Availability is checked here (gameplay), not in the animator.
-   */
-  private applyActions(input: Readonly<InputState>): void {
-    const pressed = input.jump && !this.jumpLatched;
-    this.jumpLatched = input.jump;
-    if (!pressed) return;
-
-    if (this.grounded) {
-      this.velocity.y = MOVEMENT.jumpVelocity;
-      this.grounded = false;
-      this.animationInput.jumpStarted = true;
-      return;
-    }
-
-    if (this.backflipsRemaining > 0) {
-      // Consume one availability, start one performance.
-      this.backflipsRemaining -= 1;
-      this.flipCount += 1;
-      this.animationInput.backflipRequested = true;
-      this.applyFlipImpulse();
-    }
-  }
-
-  /**
-   * Re-launch the player off a backflip.
-   *
-   * A flip is a traversal move: it replaces vertical velocity with a fresh
-   * upward impulse and adds forward speed, so chaining flips climbs higher and
-   * carries the player further down the gorge. Each successive flip in the
-   * same airborne window lifts harder than the last.
-   *
-   * This lives in the player simulation on purpose. The animator stays purely
-   * visual and must never touch velocity - see CLAUDE.md.
-   */
-  private applyFlipImpulse(): void {
-    const lift = Math.min(
-      BACKFLIP.liftBase + BACKFLIP.liftPerChain * this.flipsThisAirtime,
-      BACKFLIP.liftMax,
+    // The trail is emitted from the RENDERED position and reads the same speed
+    // the animator does, so a treadmill runner glows without laying a ribbon
+    // across the map.
+    this.character.updateEffects(
+      delta,
+      this.motion.x + this.correction.x,
+      this.motion.y + this.correction.y,
+      this.motion.z + this.correction.z,
+      this.motion.treadmillTier > 0 ? 0 : this.horizontalSpeed,
     );
-    this.flipsThisAirtime += 1;
-
-    // Replace rather than add, so a flip late in a fall still pops cleanly.
-    this.velocity.y = lift;
-
-    // Forward push along the direction the character is facing.
-    this.velocity.x += Math.sin(this.yaw) * BACKFLIP.forwardImpulse;
-    this.velocity.z += Math.cos(this.yaw) * BACKFLIP.forwardImpulse;
-
-    const speed = this.horizontalSpeed;
-    if (speed > BACKFLIP.maxAirSpeed) {
-      const scale = BACKFLIP.maxAirSpeed / speed;
-      this.velocity.x *= scale;
-      this.velocity.z *= scale;
-    }
   }
 
-  private applyHorizontal(
-    delta: number,
-    input: Readonly<InputState>,
-    cameraYaw: number,
-  ): void {
-    const hasInput = input.moveX !== 0 || input.moveZ !== 0;
-
-    // Rotate the raw stick input into world space using the camera's yaw.
-    const sin = Math.sin(cameraYaw);
-    const cos = Math.cos(cameraYaw);
-    MOVE_DIRECTION.set(
-      input.moveX * cos + input.moveZ * sin,
-      0,
-      input.moveZ * cos - input.moveX * sin,
-    );
-
-    const targetSpeed = input.sprint ? MOVEMENT.runSpeed : MOVEMENT.walkSpeed;
-    const control = this.grounded ? 1 : MOVEMENT.airControl;
-
-    if (hasInput) {
-      const accel = MOVEMENT.acceleration * control * delta;
-      const rate = Math.min(accel / targetSpeed, 1);
-      this.velocity.x += (MOVE_DIRECTION.x * targetSpeed - this.velocity.x) * rate;
-      this.velocity.z += (MOVE_DIRECTION.z * targetSpeed - this.velocity.z) * rate;
-
-      const desiredYaw = Math.atan2(MOVE_DIRECTION.x, MOVE_DIRECTION.z);
-      this.yaw = rotateTowards(this.yaw, desiredYaw, MOVEMENT.turnSpeed * delta);
-    } else if (this.grounded) {
-      const drop = MOVEMENT.deceleration * delta;
-      const speed = this.horizontalSpeed;
-      // The speed guard matters independently of `drop`: dividing by a zero
-      // speed would yield Infinity, and 0 * Infinity is NaN.
-      if (speed <= drop || speed < 1e-6) {
-        this.velocity.x = 0;
-        this.velocity.z = 0;
-      } else {
-        const scale = (speed - drop) / speed;
-        this.velocity.x *= scale;
-        this.velocity.z *= scale;
-      }
-    }
+  /** Copy the predicted motion out, for tests and diagnostics. */
+  readMotion(into: PlayerMotion): void {
+    copyMotion(this.motion, into);
   }
 
-  /**
-   * Land on whatever platform is under the player, or keep falling.
-   *
-   * Leaving the ground by ANY means - jumping, walking off a platform edge -
-   * must clear `grounded`, or the fall animation never plays and a second
-   * ground jump stays available in mid-air.
-   */
-  private resolveGround(previousY: number): void {
-    const surfaceY = this.collision.surfaceYAt(this.position.x, this.position.z);
-
-    // Over open gorge, still rising, or above the surface: airborne.
-    if (surfaceY === null || this.velocity.y > 0 || this.position.y > surfaceY) {
-      this.grounded = false;
+  /** Ease the render-space correction offset back to zero. */
+  private decayCorrection(delta: number): void {
+    if (this.correction.lengthSq() < 1e-8) {
+      this.correction.set(0, 0, 0);
       return;
     }
+    this.correction.multiplyScalar(Math.exp(-CORRECTION_RATE * delta));
+  }
 
-    // Only land when falling onto the surface from above; a player who has
-    // already dropped past a platform must not be snapped back up onto it.
-    if (!this.collision.canLandOn(previousY, surfaceY)) {
-      this.grounded = false;
-      return;
-    }
-
-    this.position.y = surfaceY;
-    this.velocity.y = 0;
-    this.grounded = true;
+  private syncFromMotion(): void {
+    this.position.set(this.motion.x, this.motion.y, this.motion.z);
+    this.velocity.set(this.motion.vx, this.motion.vy, this.motion.vz);
   }
 
   private updateAnimation(delta: number): void {
-    this.animationInput.grounded = this.grounded;
-    this.animationInput.horizontalSpeed = this.horizontalSpeed;
-    this.animationInput.verticalVelocity = this.velocity.y;
+    this.animationInput.grounded = this.motion.grounded;
+    // A player on a treadmill has zero velocity by design, so the animator is
+    // handed the speed they are RUNNING at rather than the speed they are
+    // travelling at. This is the one place the two differ.
+    this.animationInput.horizontalSpeed =
+      this.motion.treadmillTier > 0 ? this.maxRunSpeed : this.horizontalSpeed;
+    this.animationInput.verticalVelocity = this.motion.vy;
+    this.animationInput.jumpStarted = this.events.jumpStarted;
+    this.animationInput.landed = this.events.landed;
+    this.animationInput.backflipRequested = this.events.backflipRequested;
     this.character.update(delta, this.animationInput);
   }
 
   private syncCharacter(): void {
-    this.character.setPosition(this.position.x, this.position.y, this.position.z);
-    this.character.setYaw(this.yaw);
+    // The eased correction is applied to the RENDERED transform only; the
+    // simulated position stays exactly what the shared step produced.
+    this.character.setPosition(
+      this.motion.x + this.correction.x,
+      this.motion.y + this.correction.y,
+      this.motion.z + this.correction.z,
+    );
+    this.character.setYaw(this.motion.yaw);
   }
 }
-
-/** Shortest-path rotation from `current` toward `target`, capped at `maxDelta`. */
-const rotateTowards = (current: number, target: number, maxDelta: number): number => {
-  let diff = target - current;
-  while (diff > Math.PI) diff -= Math.PI * 2;
-  while (diff < -Math.PI) diff += Math.PI * 2;
-  if (Math.abs(diff) <= maxDelta) return target;
-  return current + Math.sign(diff) * maxDelta;
-};

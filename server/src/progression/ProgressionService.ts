@@ -1,4 +1,4 @@
-import { PROGRESSION } from '@obby/shared';
+import { maxLevelForRebirth, rebirthMultiplier } from '@obby/shared';
 import type { PlayerState } from '../rooms/state/PlayerState.js';
 
 /**
@@ -20,11 +20,11 @@ export class ProgressionService {
 
   /** Level cap for a given rebirth count. Rebirth raises the cap. */
   levelCap(rebirths: number): number {
-    return PROGRESSION.baseLevelCap + rebirths * PROGRESSION.levelCapPerRebirth;
+    return maxLevelForRebirth(rebirths);
   }
 
   /** Progression multiplier for a given rebirth count. */
   multiplier(rebirths: number): number {
-    return 1 + rebirths * PROGRESSION.progressionMultiplierPerRebirth;
+    return rebirthMultiplier(rebirths);
   }
 }

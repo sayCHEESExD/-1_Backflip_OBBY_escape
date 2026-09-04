@@ -37,6 +37,10 @@ export class RemotePlayerManager {
     player.setNetworkTransform(state.x, state.y, state.z, state.rotationY);
     player.setMotionState(state);
     this.scene.add(player.character.root);
+    // World-space effects are a sibling of the character, not a child - a
+    // trail must stay where it was laid down.
+    this.scene.add(player.character.worldRoot);
+    player.character.setCosmetics(state.trailSlot, state.auraSlot);
     this.players.set(sessionId, player);
 
     logger.info(SCOPE, `remote player added: ${sessionId} (total ${this.players.size})`);
@@ -53,6 +57,10 @@ export class RemotePlayerManager {
 
     player.setNetworkTransform(state.x, state.y, state.z, state.rotationY);
     player.setMotionState(state);
+    // Cosmetics come from replicated state, so every client sees the same
+    // trail and aura on a given player.
+    player.character.setCosmetics(state.trailSlot, state.auraSlot);
+    player.character.boots.setSlot(state.bootSlot);
   }
 
   remove(sessionId: string): void {

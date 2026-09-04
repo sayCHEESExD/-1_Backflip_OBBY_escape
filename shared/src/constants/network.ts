@@ -34,6 +34,16 @@ export const MessageType = {
   ClaimTrophy: 'claimTrophy',
   /** Client -> server: report touching a hazard. */
   HazardHit: 'hazardHit',
+  /** Client -> server: request to buy the boot the player is standing on. */
+  BuyBoot: 'buyBoot',
+  /** Client -> server: request a rebirth. */
+  Rebirth: 'rebirth',
+  /** Client -> server: buy / equip a trail. */
+  BuyTrail: 'buyTrail',
+  EquipTrail: 'equipTrail',
+  /** Client -> server: buy / equip an aura. */
+  BuyAura: 'buyAura',
+  EquipAura: 'equipAura',
 } as const;
 
 export type MessageType = (typeof MessageType)[keyof typeof MessageType];

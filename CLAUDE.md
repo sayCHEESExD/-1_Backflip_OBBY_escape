@@ -39,6 +39,17 @@ engine. Do not add a framework or a build tool without a concrete need.
 
 **Movement**
 
+- **The MOUSE aims the camera; the camera defines forward.** WASD and the
+  arrow keys move relative to it and never rotate it. The camera used to trail
+  the player's own facing, so pressing a movement key turned the character,
+  which swung the camera, which redefined forward - a feedback loop, not a
+  control scheme. `ThirdPersonCamera` owns its yaw/pitch, `MouseLook` writes
+  them, and `stepPlayer` rotates the stick by that yaw. The character's facing
+  then follows where it actually moves.
+- The camera's RIGHT is `(-cos yaw, sin yaw)`, not `(cos yaw, -sin yaw)`: with
+  Y up and +X to the right of screen, +Z runs away from the viewer, which is
+  why +X is the player's left down the gorge. Getting this backwards inverts
+  strafing, and a trailing camera hides it completely.
 - **Velocity determines jump distance.** Faster approach = longer jump. This is
   the central skill expression; do not cap it with a fixed jump arc.
 - **Backflips are a traversal move.** Each flip re-launches the player in mid
@@ -49,9 +60,53 @@ engine. Do not add a framework or a build tool without a concrete need.
 
 **Progression**
 
-- **Boots** increase progression gained per step.
-- **Rebirth** increases the level cap and the progression multiplier.
-- **Treadmills** provide AFK progression.
+- **Speed** is the currency. Players farm it by moving: distance travelled on
+  foot plus a bonus each time they leave the ground.
+- Crossing a level threshold grants **one more backflip**. Capacity EQUALS
+  level - level 15 means fifteen flips before touching down.
+- Gaps between islands are tuned so island N needs N flips. Farming Speed is
+  what physically opens the route; you cannot run your way to +100.
+- **Boots** set Speed gained per step, bought with trophy Wins. Buying is a
+  DELIBERATE ACT: the player must walk onto a pedestal in the Win Shop while
+  holding enough Wins. Reaching the Wins total alone does nothing.
+  Wins are SPENT: the tier's cost is deducted on purchase. (This reverses the
+  earlier "threshold, not a price" rule, by explicit request.) The highest tier
+  OWNED is always equipped, so a purchase can never downgrade anyone, and
+  spending never removes a boot already bought.
+- **Trails** multiply ACTUAL MOVEMENT SPEED, bought with Wins and worn one at
+  a time. They feed the one movement formula through its `extraMultiplier`
+  parameter - never a calculation of their own.
+- **Auras** multiply TROPHY REWARDS, bought with Wins and worn one at a time.
+  Applied in `resolveTrophyReward`, after `TrophyService` has already validated
+  the platform, the claim history, the position and the cooldown.
+- The two never cross. A trail must never touch a reward and an aura must never
+  touch speed; `resolveProgressionRate` (boots, rebirth, treadmill) is a third
+  axis again. Keeping them separate is why each lives in its own shared config.
+- **Rebirth** raises the level cap and the multiplier:
+  `maxLevel = 10 x (rebirth + 1)`, `multiplier = 1 + rebirth x 0.5`.
+  Available once the player reaches their current max level. It resets level
+  and Speed but PRESERVES Wins, boots and every other permanent unlock.
+- **Treadmills** multiply the progression gained per step while the player is
+  running on one. They do NOT change movement speed. Eight tiers stand along
+  the back wall of spawn, each gated by a rebirth count (0/1/3/9/18/36/100/200).
+- Using a treadmill is a MOVEMENT STATE, owned by `stepPlayer`: come to a stop
+  on an unlocked deck and the machine takes you, pinning position and velocity
+  so you run without travelling. Any control at all - a nudge of the stick or
+  the jump button - leaves on that same step, from exactly where you stood.
+  Entry requires a still stick precisely because exit is any input; otherwise
+  walking on would enter and leave on alternating steps.
+- A runner earns progression from the BELT: distance is `runSpeed x step`
+  instead of a position delta, fed through the same per-step formula. There is
+  no second progression path.
+- Treadmills are never single-occupancy. Entering preserves the player's own X
+  within the belt and only snaps Z, so players sharing a machine keep distinct
+  positions; all treadmill state is per-player.
+- `player.speed` is the ANIMATION signal, not physics - it reports the speed a
+  runner is running AT while the replicated velocity stays zero, or remote
+  clients would show them idling on the spot.
+- The gate is `maxTreadmillTier`, resolved from the server's own rebirth count
+  and replicated so client prediction matches. There is no treadmill message,
+  so there is nothing for a client to forge.
 
 **Multiplayer**
 
@@ -111,6 +166,14 @@ Procedural, bone-driven, and required for the finished game — not a placeholde
 
 ## World
 
+- The island ladder is **generated, not authored past the opening**. The
+  hand-tuned first ten islands end exactly at the rebirth-0 level cap; every
+  island after that continues the same curve by compounding (`GAP_GROWTH`,
+  `REWARD_GROWTH`, both read off the authored tail). Adding more islands is a
+  one-number change to `EXTENDED_ISLANDS`, never another table of values.
+- `GORGE.horizonZ` is DERIVED from `ROUTE_END_Z`. The terrain is a handful of
+  scaled boxes, so length is free, but a fixed horizon would leave the last
+  islands floating over open sky. Foliage is a DENSITY for the same reason.
 - The gorge layout is **pure data** in `shared/src/config/gorge.ts` - platform
   positions, trophy values, bank terraces and redlines. Never scatter world
   coordinates through scene code.
@@ -120,9 +183,24 @@ Procedural, bone-driven, and required for the finished game — not a placeholde
 - Islands are **rectangular and wider across the gorge than along it** (22 x 11).
   The collection pad sits at the **far left** of every island, so a player who
   wants a bigger trophy runs down the right-hand lane instead.
+- Each island has a themed **name and deck colour** (Starter, Cloud, Volcano,
+  Tsunami, Hot, Nature, Crystal, Thunder, Ancient). Names live in shared config
+  as island identity; colours live in `client/src/config/worldVisuals.ts`. The
+  deck is a separate thin mesh laid on top - the island body keeps the shared
+  geometry AND the shared material, so the geometry rule is untouched.
 - `GorgeCollision` is the gameplay shape of the world and `GorgeWorld` is its
   visuals. Both read the same config, so they cannot drift apart.
-- Redlines sit **over islands**, with one exception: a line high enough that a
+- Redlines sit **in the gaps between islands**, never on an island. An island
+  is where a player lands, re-aims and launches; a hazard there punishes the
+  one part of the route that must be safe. A gap is the opposite - the player
+  is already committed to an arc, so a line there is a shape to fly through.
+- Every line spans **bank to bank**. Its half-span comes from `bankXAtHeight`,
+  which follows the canyon wall, so a high line is a LONGER line and both ends
+  are always buried in terrain rather than stopping in mid air.
+- A stacked "column" of rows must leave a passable window: the hit test treats
+  the player as a box 3.2 tall and each line is 0.22 thick, so rows need more
+  than 3.64 units of clear air between them. `ROW_HEIGHTS` uses 4.8.
+- Superseded, kept for context - redlines used to sit over islands: a line high enough that a
   normal jump passes under it (y >= 7.2) may span a gap, where it reads as "do
   not flip here". Any other height over a gap is unfair - the jump arc is under
   a metre high at the launch edge, so a low line is unclearable, and it peaks
@@ -138,6 +216,72 @@ Procedural, bone-driven, and required for the finished game — not a placeholde
 - Trophy rewards are granted in exactly one place: `TrophyService` on the
   server. It validates the platform, the run's claim history, the player's
   reported position and a claim cooldown. The client only ever asks.
+- **Wins are spent in exactly one place**: `Wallet.spend`. Boots, trails and
+  auras are three shops but must not become three ways to take payment - a
+  second deduction path is how a wallet ends up disagreeing with an inventory.
+  Wins are only ever ADDED by `TrophyService`, and only ever removed there.
+- Trails and auras share one `CosmeticService`, parameterised by a binding, so
+  the buy-and-equip transaction exists once. What each multiplier DOES is never
+  decided in that service.
+- **Movement speed has exactly one EVALUATOR**: `SpeedService.movementProfile`.
+  It is the only place that knows every modifier feeding the shared formula,
+  so nothing else may write `moveMultiplier`. `RebirthService.sync` used to,
+  and silently dropped the equipped trail the moment trails existed.
+- Boots are decided in exactly one place: `BootService` on the server. It
+  validates the slot, the Wins, that the player is standing at that pedestal
+  and a purchase cooldown, then DEDUCTS the price and equips the best tier
+  owned. Taking payment, granting the item and equipping happen together in
+  that one method, so the wallet and the inventory cannot disagree. The client
+  only asks and renders.
+- **Movement is SERVER-AUTHORITATIVE.** Clients send INPUT only
+  (`MoveMessage` carries seq, dt and the stick - no transform). The server runs
+  `stepPlayer` from `shared/src/sim/PlayerSim.ts` and owns position, velocity,
+  rotation, grounded, jump and backflip state. The client runs the identical
+  function to predict, keeps unacknowledged inputs, and on each server update
+  snaps and replays them. Never add a second physics implementation, and never
+  let a client assert a transform.
+- `WorldCollision` lives in `shared/src/sim/` because BOTH sides collide
+  against it. The client's `world/GorgeCollision.ts` is only a re-export.
+- **Actual movement speed has exactly ONE formula**: `resolveMovementProfile`
+  in `shared/src/config/rebirth.ts`. The server evaluates it from level and
+  rebirth and replicates `moveMultiplier`; the client multiplies its base
+  speeds by that and never derives its own. Boots and treadmills multiply in
+  through the `extraMultiplier` parameter - never by adding a second formula.
+  Server movement validation reads the same profile, so what the player moves
+  at and what the server will credit can never disagree.
+- **Progression gained per step has exactly ONE formula**:
+  `resolveProgressionRate` in `shared/src/config/progressionGain.ts`. Boots,
+  rebirth and treadmill multiply together there and nowhere else. A new
+  modifier is added to that function, never to a caller - `SpeedService` is its
+  only caller and does no arithmetic of its own.
+- Persistence sits behind `PersistenceAdapter` in `server/src/persistence/`.
+  Nothing above that boundary knows where profiles are stored, and
+  `createPersistence` is the ONLY place naming a concrete adapter.
+- Rebirth state is server-authoritative: `RebirthService` alone decides
+  eligibility and performs the reset.
+- Speed is granted in exactly one place: `SpeedService` on the server. It is
+  DERIVED from movement the server observes - the distance between consecutive
+  reported positions, capped at a plausible step so a teleport pays nothing.
+  A client cannot request Speed, and the HUD only ever renders the replicated
+  total. Reset the movement baseline on every respawn.
+
+- The starting area is walled on the left (+X) and the back (-Z), with the Win
+  Shop's backdrop closing the right. The front is open only across the GORGE
+  MOUTH (`|x| <= GORGE.channelHalfWidth`); the rest of the front edge is wall,
+  because the start is far wider than the channel it feeds into and an open
+  edge out there would yank a player sideways to the channel limit in one step.
+  `WorldCollision.clampToBounds` owns those limits and applies them anywhere at
+  or behind the platform's front edge - a range test would let a large
+  displacement tunnel the back wall.
+- The start is the HEAD OF THE GORGE, not a floating slab: solid ground from
+  rim to rim running down past the river floor, with the blue channel beginning
+  at its front face (`GORGE_HEAD`). Only the starting area is grounded like
+  this - the trophy islands stay floating platforms.
+- The canyon slope is a rotated slab whose TOP FACE is the visible bank. Its
+  centre must be offset along that face's own normal, never straight down in
+  world Y: offsetting in Y slides the face inward and down, so the slope starts
+  inside the channel and never reaches the rim, which is what left the green
+  bank visibly disconnected from the blue wall.
 
 ## Architecture rules
 
@@ -150,18 +294,68 @@ Procedural, bone-driven, and required for the finished game — not a placeholde
 
 ## Current milestone
 
-Milestone 3 (the gorge) is complete: the linear gorge world in the toy-brick
-reference style - blue tiled channel, steep canyon walls, studded grass rims
-with instanced conifers, a cloudy sky - plus nine identical wide islands
-(+1 to +100) on one straight axis, left-hand collection pads, server-validated
-trophy collection, red hazard lines, and backflips as a traversal move.
-All world textures are generated procedurally on canvas; no image assets.
+Milestone 9 (treadmill interaction, Wins spending, map connection) and
+milestone 10 (redlines, Space Island, trails and auras) are complete. The route
+now ends at Space Island (+200), redlines live in the gaps in a 1 / 2 / 3 / 3 /
+3 / 3x3 pattern, and two cosmetic ladders exist: trails multiply movement speed
+and auras multiply trophy rewards.
+
+Milestone 8 (durable persistence and treadmills) is complete.
+
+Profiles are now written to disk behind a `PersistenceAdapter`, so progression
+survives a server RESTART, not just a reconnect. The shipped adapter is a
+single JSON file under `server/data/`, written debounced and ATOMICALLY - temp
+file, fsynced, then renamed - so a crash mid-write cannot corrupt a save. The
+room also autosaves every connected player every 15s, because Speed accrues
+continuously between the discrete events that otherwise trigger a save.
+
+Treadmills are the new gameplay system: eight decks along the back wall of the
+starting platform, which grew to 54 x 56 to hold them without crowding the run.
+A deck is a 0.2 step - deliberately inside the simulation's landing tolerance,
+so walking on and off needs no step-up rule. Visual tier ramps with the gate:
+colour, emissive frame, belt scroll speed, a lit halo from tier 4 and orbiting
+energy cubes from tier 6. Every machine shares one geometry per part.
+
+Milestone 7 (server-authoritative movement) is complete: the physics step and
+the collision model moved into `shared/src/sim/`, the client sends input on a
+fixed 60Hz step and predicts with reconciliation, and the server simulates and
+owns every movement field. The old x3.5 speed cap is gone (now a 50x safety
+rail), so R2+ scales properly.
+
+Milestone 6 (real movement speed, rebirth, longer route) is complete on top of
+milestone 5: level and rebirth now drive ACTUAL movement speed through one
+shared formula, rebirth is implemented with the 10/20/30/40 cap ladder, gaps
+after the second island are much larger, and progression survives a reconnect
+via an in-memory profile store keyed by a browser-stored player id.
+
+Milestone 5 (boots and the Win Shop) is complete, on top of milestone 4:
+seven boot tiers bought by walking onto their pedestal, the Win Shop on the
+right of an enlarged walled starting area, and sneakers worn on the player's
+feet.
+
+Milestone 4 (Speed, levels and game UI) remains, on top of the milestone 3
+gorge: Speed farming from movement, a level curve that grants one backflip per
+level, flip-gated island gaps, themed named islands, and the game HUD - wins
+counter, Speed/level bar, airborne jump counter and floating Speed popups.
+
+The gorge itself is the toy-brick reference style - blue tiled channel, steep
+canyon walls, studded grass rims with instanced conifers, a cloudy sky - with
+nine identical wide islands (+1 to +100) on one straight axis, left-hand
+collection pads, server-validated trophy collection and red hazard lines. All
+world textures are generated procedurally on canvas; no image assets.
 
 The temporary test floor is gone.
 
-**Not built yet, and out of scope until the milestone advances:** boot shop,
-rebirth, treadmills, level progression, full UI, monetization, final VFX,
-audio.
+**Not built yet, and out of scope until the milestone advances:** full UI,
+monetization, final VFX, audio.
+
+`ProfileStore` stays a process-wide singleton because a room dies with its last
+client, but it is now a CACHE in front of a durable adapter rather than the
+only copy. Two tabs in one browser still share a `playerId`, and therefore one
+profile.
+
+The level cap is `PROGRESSION.baseLevelCap`; rebirth will raise it. Boots will
+multiply Speed per step - that hook belongs in `SpeedService`, nowhere else.
 
 Backflips are ANIMATED and input-driven, but the progression that grants them
 is not built: `BACKFLIP.defaultCapacity` in `shared/src/config/backflip.ts` is

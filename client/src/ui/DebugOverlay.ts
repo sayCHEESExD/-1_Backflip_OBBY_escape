@@ -26,8 +26,9 @@ export class DebugOverlay {
     this.element = document.createElement('div');
     this.element.style.cssText = [
       'position:fixed',
-      'top:8px',
-      'left:8px',
+      // Sits below the wins counter, which owns the top-left corner.
+      'top:58px',
+      'left:14px',
       'padding:8px 10px',
       'background:rgba(8,12,24,0.72)',
       'color:#cbd5f5',

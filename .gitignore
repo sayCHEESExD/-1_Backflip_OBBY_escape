@@ -6,3 +6,6 @@ dist/
 .DS_Store
 *.log
 .vite/
+
+# Persisted player profiles (local dev save file)
+server/data/

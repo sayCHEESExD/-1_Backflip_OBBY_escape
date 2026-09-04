@@ -2,7 +2,10 @@ import type { PlayerAnimationState } from '@obby/shared';
 import { Group, Object3D } from 'three';
 import type { AnimationInput } from '../animation/AnimationInput.js';
 import { PlayerAnimator } from '../animation/PlayerAnimator.js';
+import { AuraEffect } from './AuraEffect.js';
+import { TrailEffect } from './TrailEffect.js';
 import { PlayerRig } from '../animation/rig/PlayerRig.js';
+import { BootModel } from './BootModel.js';
 import { PLAYER_MODEL_YAW_OFFSET } from '../config/playerVisuals.js';
 import { playerModelLoader, type PlayerInstanceOptions } from './PlayerModelLoader.js';
 
@@ -22,8 +25,21 @@ export class PlayerCharacter {
   /** Attach this to the scene. Its transform is the player transform. */
   readonly root = new Group();
 
+  /**
+   * World-space effects that must NOT follow the character.
+   *
+   * A trail is what the player has already passed through, so it cannot be
+   * parented to a moving root. Whoever adds `root` to the scene adds this too.
+   */
+  readonly worldRoot = new Group();
+
   readonly animator: PlayerAnimator;
   readonly rig: PlayerRig;
+  readonly boots: BootModel;
+  /** Worn glow. Parented to the character, so it follows the animation. */
+  readonly aura = new AuraEffect();
+  /** Ribbon left behind. Lives in `worldRoot`, not on the character. */
+  readonly trail = new TrailEffect();
 
   private readonly flipPivot = new Group();
   private readonly visual = new Group();
@@ -44,6 +60,28 @@ export class PlayerCharacter {
     // the character stands or which way it faces.
     this.rig = new PlayerRig(this.model, this.model);
     this.animator = new PlayerAnimator(this.rig, this.flipPivot, this.visual);
+    // Cosmetic only - parented to the leg bones so they follow the animation.
+    this.boots = new BootModel([this.rig.getBone('LegL2'), this.rig.getBone('LegR2')]);
+
+    this.root.add(this.aura.root);
+    this.worldRoot.add(this.trail.root);
+  }
+
+  /** Show the cosmetics the server says this player has equipped. */
+  setCosmetics(trailSlot: number, auraSlot: number): void {
+    this.trail.setSlot(trailSlot);
+    this.aura.setSlot(auraSlot);
+  }
+
+  /**
+   * Advance the cosmetic effects.
+   *
+   * Separate from `update` because the trail needs the player's world position
+   * and speed, which the animation input does not carry.
+   */
+  updateEffects(delta: number, x: number, y: number, z: number, speed: number): void {
+    this.aura.update(delta);
+    this.trail.update(delta, x, y, z, speed);
   }
 
   setPosition(x: number, y: number, z: number): void {
@@ -66,9 +104,16 @@ export class PlayerCharacter {
   /** Clear animation state, e.g. after a server-issued respawn. */
   resetAnimation(): void {
     this.animator.reset();
+    // The ribbon describes a run that no longer exists; keeping it would draw
+    // a line from the old position to the spawn point.
+    this.trail.clear();
   }
 
   dispose(): void {
+    this.boots.dispose();
+    this.aura.dispose();
+    this.trail.dispose();
     this.root.removeFromParent();
+    this.worldRoot.removeFromParent();
   }
 }

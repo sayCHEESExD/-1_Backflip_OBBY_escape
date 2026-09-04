@@ -91,6 +91,13 @@ export class RemotePlayer {
     if (this.flipsToPlay > 0) this.flipsToPlay -= 1;
 
     this.character.update(delta, this.animationInput);
+    this.character.updateEffects(
+      delta,
+      this.current.x,
+      this.current.y,
+      this.current.z,
+      this.animationInput.horizontalSpeed,
+    );
   }
 
   dispose(): void {

@@ -84,6 +84,16 @@ export class PlayerRig {
     return this.missingBones.length === 0;
   }
 
+  /**
+   * The bone bound to a name, for attaching cosmetics.
+   *
+   * Anything parented to a returned bone follows the animation automatically.
+   * Callers must not write to the bone's rotation - that belongs to applyPose.
+   */
+  getBone(name: BoneName): Bone | null {
+    return this.bindings.get(name)?.bone ?? null;
+  }
+
   get boundBoneCount(): number {
     return this.bindings.size;
   }

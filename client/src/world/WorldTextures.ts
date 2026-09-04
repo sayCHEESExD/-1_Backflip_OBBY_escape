@@ -140,6 +140,48 @@ export class WorldTextures {
     return texture;
   }
 
+  /**
+   * A deep-space deck: near-black with scattered stars and a faint nebula.
+   *
+   * Deterministic - a fixed seed, so every client renders the same sky and the
+   * island reads identically for everyone.
+   */
+  starfield(): Texture {
+    return this.cached('starfield', () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 128;
+      canvas.height = 128;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return canvas;
+
+      ctx.fillStyle = '#0d0824';
+      ctx.fillRect(0, 0, 128, 128);
+
+      // Nebula wash.
+      const nebula = ctx.createRadialGradient(44, 52, 4, 44, 52, 74);
+      nebula.addColorStop(0, 'rgba(140,90,255,0.55)');
+      nebula.addColorStop(1, 'rgba(140,90,255,0)');
+      ctx.fillStyle = nebula;
+      ctx.fillRect(0, 0, 128, 128);
+
+      let seed = 0x5eed5;
+      const random = (): number => {
+        seed = (seed * 1664525 + 1013904223) >>> 0;
+        return seed / 0x100000000;
+      };
+      for (let i = 0; i < 90; i += 1) {
+        const x = random() * 128;
+        const y = random() * 128;
+        const size = random() < 0.86 ? 1 : 2;
+        ctx.fillStyle = random() < 0.2 ? '#9fd8ff' : '#ffffff';
+        ctx.globalAlpha = 0.45 + random() * 0.55;
+        ctx.fillRect(x, y, size, size);
+      }
+      ctx.globalAlpha = 1;
+      return canvas;
+    });
+  }
+
   dispose(): void {
     for (const texture of this.cache.values()) texture.dispose();
     this.cache.clear();

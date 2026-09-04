@@ -2,7 +2,9 @@ import {
   CLIENT_SEND_MS,
   MessageType,
   ROOM_NAME,
+  type BuyBootMessage,
   type ClaimTrophyMessage,
+  type RebirthMessage,
   type HazardHitMessage,
   type MoveMessage,
   type RespawnMessage,
@@ -13,6 +15,27 @@ import { logger } from '../util/logger.js';
 import type { ConnectionStatus, NetGorgeState, NetPlayerState } from './netTypes.js';
 
 const SCOPE = 'NetworkClient';
+
+/** Key under which this browser's stable player id is kept. */
+const PLAYER_ID_KEY = 'obby.playerId';
+
+/**
+ * A stable id for this browser, so progression survives a reload.
+ *
+ * Falls back to a throwaway id when storage is unavailable (private windows,
+ * blocked site data) - the session still works, it just will not be restored.
+ */
+const resolvePlayerId = (): string => {
+  const fresh = `p_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+  try {
+    const existing = window.localStorage.getItem(PLAYER_ID_KEY);
+    if (existing) return existing;
+    window.localStorage.setItem(PLAYER_ID_KEY, fresh);
+  } catch {
+    return fresh;
+  }
+  return fresh;
+};
 
 /** Everything the game needs to react to. Kept deliberately small. */
 export interface NetworkHandlers {
@@ -56,7 +79,9 @@ export class NetworkClient {
     logger.info(SCOPE, `joining "${ROOM_NAME}" at ${clientConfig.serverUrl}`);
 
     try {
-      this.room = await this.client.joinOrCreate<NetGorgeState>(ROOM_NAME);
+      this.room = await this.client.joinOrCreate<NetGorgeState>(ROOM_NAME, {
+        playerId: resolvePlayerId(),
+      });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       this.setStatus('error', detail);
@@ -71,24 +96,27 @@ export class NetworkClient {
   }
 
   /**
-   * Report the local transform, throttled to CLIENT_SEND_RATE.
+   * Report the local INPUT, throttled to CLIENT_SEND_RATE.
    * @param now high-resolution timestamp in milliseconds
    */
-  sendTransform(now: number, message: MoveMessage): void {
+  sendInput(now: number, message: MoveMessage): void {
     if (!this.room) return;
-    if (now - this.lastSendAt < CLIENT_SEND_MS) return;
+    // Deliberately NOT rate limited. The client simulates on a fixed 60Hz
+    // step and the server advances only by the inputs it receives, so
+    // throttling here would leave the authoritative position permanently
+    // behind the player. The message is seven small fields.
     this.lastSendAt = now;
     this.room.send(MessageType.Move, message);
   }
 
   /**
-   * Send a transform immediately, bypassing the rate limit.
+   * Send an input immediately, bypassing the rate limit.
    *
-   * Used right before a trophy claim: the server validates a claim against the
-   * last transform it received, so at 20Hz the claim would otherwise overtake
-   * the position that justifies it and be rejected as out of range.
+   * Used right before a trophy claim or boot purchase: the server validates
+   * those against the position it has simulated, so the movement that gets the
+   * player there must be consumed before the request arrives.
    */
-  sendTransformNow(now: number, message: MoveMessage): void {
+  sendInputNow(now: number, message: MoveMessage): void {
     if (!this.room) return;
     this.lastSendAt = now;
     this.room.send(MessageType.Move, message);
@@ -98,6 +126,18 @@ export class NetworkClient {
   claimTrophy(platformIndex: number): void {
     const message: ClaimTrophyMessage = { platformIndex };
     this.room?.send(MessageType.ClaimTrophy, message);
+  }
+
+  /** Ask the server to grant a boot. The server decides; this never grants. */
+  buyBoot(slot: number): void {
+    const message: BuyBootMessage = { slot };
+    this.room?.send(MessageType.BuyBoot, message);
+  }
+
+  /** Ask the server to rebirth. The server checks the requirement. */
+  requestRebirth(): void {
+    const message: RebirthMessage = {};
+    this.room?.send(MessageType.Rebirth, message);
   }
 
   /** Report touching a hazard. Only ever affects this player. */
@@ -110,6 +150,26 @@ export class NetworkClient {
     await this.room?.leave(true);
     this.room = null;
     this.setStatus('disconnected');
+  }
+
+  /** Ask to buy a trail. The server decides and replicates the result. */
+  buyTrail(slot: number): void {
+    this.room?.send(MessageType.BuyTrail, { slot });
+  }
+
+  /** Ask to wear an owned trail, or 0 to remove it. */
+  equipTrail(slot: number): void {
+    this.room?.send(MessageType.EquipTrail, { slot });
+  }
+
+  /** Ask to buy an aura. */
+  buyAura(slot: number): void {
+    this.room?.send(MessageType.BuyAura, { slot });
+  }
+
+  /** Ask to wear an owned aura, or 0 to remove it. */
+  equipAura(slot: number): void {
+    this.room?.send(MessageType.EquipAura, { slot });
   }
 
   private bindRoom(room: Room<NetGorgeState>): void {

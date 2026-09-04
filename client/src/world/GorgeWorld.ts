@@ -1,9 +1,12 @@
 import { Group, type Scene } from 'three';
 import { logger } from '../util/logger.js';
+import { BootShop } from './BootShop.js';
 import { Foliage } from './Foliage.js';
-import { GorgeCollision } from './GorgeCollision.js';
+import { WorldCollision } from '@obby/shared';
 import { GorgeTerrain } from './GorgeTerrain.js';
 import { Redlines } from './Redlines.js';
+import { SpawnArea } from './SpawnArea.js';
+import { Treadmills } from './Treadmills.js';
 import { TrophyPlatforms } from './TrophyPlatforms.js';
 import { WorldTextures } from './WorldTextures.js';
 
@@ -18,22 +21,29 @@ const SCOPE = 'GorgeWorld';
  */
 export class GorgeWorld {
   readonly root = new Group();
-  readonly collision = new GorgeCollision();
+  readonly collision = new WorldCollision();
 
   private readonly textures = new WorldTextures();
   private readonly terrain: GorgeTerrain;
   private readonly platforms: TrophyPlatforms;
+  private readonly spawnArea: SpawnArea;
   private readonly redlines = new Redlines();
   private readonly foliage = new Foliage();
+  readonly bootShop = new BootShop();
+  readonly treadmills = new Treadmills();
 
   constructor() {
     this.terrain = new GorgeTerrain(this.textures);
     this.platforms = new TrophyPlatforms(this.textures);
+    this.spawnArea = new SpawnArea(this.textures);
 
     this.root.add(this.terrain.root);
     this.root.add(this.platforms.root);
     this.root.add(this.redlines.root);
     this.root.add(this.foliage.root);
+    this.root.add(this.bootShop.root);
+    this.root.add(this.treadmills.root);
+    this.root.add(this.spawnArea.root);
   }
 
   addTo(scene: Scene): void {
@@ -52,6 +62,9 @@ export class GorgeWorld {
     this.platforms.dispose();
     this.redlines.dispose();
     this.foliage.dispose();
+    this.bootShop.dispose();
+    this.treadmills.dispose();
+    this.spawnArea.dispose();
     this.textures.dispose();
     this.root.removeFromParent();
   }

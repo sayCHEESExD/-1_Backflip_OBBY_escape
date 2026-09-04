@@ -11,8 +11,10 @@
  */
 export interface BackflipConfig {
   /**
-   * Flips a player may perform per airborne window before progression is
-   * wired up. Level progression will grant this instead - see CLAUDE.md.
+   * Flips a player has at level 1, before any Speed has been farmed.
+   *
+   * Capacity is otherwise EQUAL TO LEVEL: level 15 means fifteen flips in one
+   * airborne window. SpeedService owns that; this is only the starting point.
    */
   readonly defaultCapacity: number;
   /** Hard ceiling the server will accept, regardless of progression. */
@@ -39,7 +41,7 @@ export interface BackflipConfig {
 }
 
 export const BACKFLIP: BackflipConfig = {
-  defaultCapacity: 3,
+  defaultCapacity: 1,
   maxCapacity: 50,
   liftBase: 14,
   liftPerChain: 2.6,

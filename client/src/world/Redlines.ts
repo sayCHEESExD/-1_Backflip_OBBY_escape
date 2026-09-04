@@ -1,4 +1,4 @@
-import { GORGE, PLATFORM, REDLINE_RADIUS, REDLINES } from '@obby/shared';
+import { PLATFORM, REDLINE_RADIUS, REDLINES } from '@obby/shared';
 import {
   CylinderGeometry,
   Group,
@@ -10,11 +10,13 @@ import {
 } from 'three';
 import { WORLD_COLORS } from '../config/worldVisuals.js';
 
-/** Extra length so each line visibly bites into both banks. */
-const BANK_OVERLAP = 3;
-
 /**
  * Red hazard lines strung bank to bank across the gorge.
+ *
+ * Each line's span comes from the shared config, which derives it from the
+ * line's HEIGHT - the canyon widens as it rises, so a high line is a long one.
+ * That is what keeps both ends buried in terrain instead of stopping in mid
+ * air.
  *
  * One InstancedMesh for every line plus one for the anchor caps: two draw
  * calls for the whole hazard set, however many lines the config defines.
@@ -27,9 +29,7 @@ export class Redlines {
   private readonly material: MeshBasicMaterial;
 
   constructor() {
-    const span = (GORGE.bankInnerX + BANK_OVERLAP) * 2;
-
-    // A unit-length cylinder laid along X, scaled to span the gorge.
+    // A unit-length cylinder laid along X, scaled per line to span the gorge.
     this.lineGeometry = new CylinderGeometry(REDLINE_RADIUS, REDLINE_RADIUS, 1, 6);
     this.lineGeometry.rotateZ(Math.PI / 2);
 
@@ -39,8 +39,8 @@ export class Redlines {
     // against both the bright banks and the dark pit.
     this.material = new MeshBasicMaterial({ color: WORLD_COLORS.redline });
 
-    this.buildLines(span);
-    this.buildCaps(span);
+    this.buildLines();
+    this.buildCaps();
   }
 
   dispose(): void {
@@ -49,14 +49,14 @@ export class Redlines {
     this.material.dispose();
   }
 
-  private buildLines(span: number): void {
+  private buildLines(): void {
     const mesh = new InstancedMesh(this.lineGeometry, this.material, REDLINES.length);
     const dummy = new Object3D();
 
     REDLINES.forEach((line, i) => {
       dummy.position.set(0, PLATFORM.topY + line.y, line.z);
-      dummy.rotation.set(0, 0, line.tilt);
-      dummy.scale.set(span, 1, 1);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(line.halfSpan * 2, 1, 1);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
     });
@@ -67,7 +67,7 @@ export class Redlines {
   }
 
   /** Small spheres where each line meets the banks, so anchors read clearly. */
-  private buildCaps(span: number): void {
+  private buildCaps(): void {
     const mesh = new InstancedMesh(this.capGeometry, this.material, REDLINES.length * 2);
     const dummy = new Object3D();
     const matrix = new Matrix4();
@@ -75,8 +75,8 @@ export class Redlines {
 
     for (const line of REDLINES) {
       for (const side of [-1, 1] as const) {
-        const x = (side * span) / 2;
-        dummy.position.set(x, PLATFORM.topY + line.y + Math.tan(line.tilt) * x, line.z);
+        const x = side * line.halfSpan;
+        dummy.position.set(x, PLATFORM.topY + line.y, line.z);
         dummy.rotation.set(0, 0, 0);
         dummy.scale.setScalar(1);
         dummy.updateMatrix();

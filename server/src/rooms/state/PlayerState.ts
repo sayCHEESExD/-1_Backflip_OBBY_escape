@@ -31,6 +31,15 @@ export class PlayerState extends Schema {
   @type('float32') verticalVelocity = 0;
   @type('boolean') grounded = true;
 
+  /** Authoritative velocity, needed by the client to reconcile prediction. */
+  @type('float32') velocityX = 0;
+  @type('float32') velocityY = 0;
+  @type('float32') velocityZ = 0;
+  /** Highest input sequence the server has simulated for this player. */
+  @type('uint32') lastInputSeq = 0;
+  /** Flips left in the current airborne window, owned by the simulation. */
+  @type('uint8') flipsRemaining = 1;
+
   /**
    * Monotonic count of flips this player has STARTED. Remote clients replay a
    * flip whenever it increases - one integer instead of a rotation stream.
@@ -49,6 +58,55 @@ export class PlayerState extends Schema {
   @type('uint32') backflips = 0;
   /** Trophy wins. Awarded by TrophyService only - never read from a client. */
   @type('uint32') wins = 0;
+  /** Lifetime farmed Speed. Awarded by SpeedService only. Drives level. */
+  @type('float64') totalSpeed = 0;
+  /** Equipped boot slot - the best one owned. Never client-set. */
+  @type('uint8') bootSlot = 1;
+  /** Bitmask of boots bought. Written by BootService only. */
+  @type('uint16') ownedBoots = 1;
+  /**
+   * Authoritative movement multiplier, resolved from level + rebirth by the
+   * one shared formula. The client moves at exactly this - it never derives
+   * its own speed.
+   */
+  @type('float32') moveMultiplier = 1;
+  /** Highest level reachable at the current rebirth. */
+  @type('uint16') maxLevel = 10;
+
+  /**
+   * Treadmill the player is physically standing on, or 0.
+   *
+   * Derived by the server from the position it simulated - never reported by
+   * the client. Replicated separately from `treadmillTier` so the HUD can tell
+   * "standing on a locked deck" apart from "not on a deck".
+   */
+  @type('uint8') treadmillStanding = 0;
+  /** Treadmill actually in use: 0 unless RUNNING on an unlocked deck. */
+  @type('uint8') treadmillTier = 0;
+  /**
+   * Highest tier this player may use, from their rebirth count.
+   *
+   * Replicated so client prediction gates entry exactly as the server does.
+   * The server never trusts it back - it resolves it from its own rebirths.
+   */
+  @type('uint8') maxTreadmillTier = 1;
+  /** Multiplier that tier grants. 1 whenever no treadmill is in use. */
+  @type('float32') treadmillMultiplier = 1;
+  /** Final Speed granted per step, from the one shared gain formula. */
+  @type('float32') speedPerStep = 1;
+
+  /**
+   * Cosmetics. Written ONLY by CosmeticService; a client sends a slot number
+   * to buy or equip and never a cost or a multiplier, so there is no figure in
+   * a message to forge.
+   *
+   * Trails multiply actual MOVEMENT SPEED; auras multiply TROPHY REWARDS. The
+   * two never cross - see the shared configs for where each is applied.
+   */
+  @type('uint16') ownedTrails = 0;
+  @type('uint8') trailSlot = 0;
+  @type('uint16') ownedAuras = 0;
+  @type('uint8') auraSlot = 0;
 
   /** True once the client has reported at least one transform. */
   @type('boolean') ready = false;

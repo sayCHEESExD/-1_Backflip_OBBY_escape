@@ -3,7 +3,8 @@
  * authoritative server so both agree on where everything is.
  *
  * GEOMETRY RULE (see CLAUDE.md): every trophy platform is identical in width,
- * length, thickness, Y, X and rotation. ONLY Z changes. The route is one
+ * length, thickness, Y, X and rotation. ONLY Z changes. Islands do carry a
+ * themed deck COLOUR and name, which is presentation, not geometry. The route is one
  * perfectly straight line down +Z - never offset, zig-zagged, rotated or
  * curved. `TROPHY_PLATFORMS` is generated from a gap list precisely so a
  * per-platform X or rotation cannot be introduced by accident.
@@ -35,9 +36,17 @@ export const PLATFORM = {
 
 /** The starting area at the mouth of the gorge. */
 export const SPAWN_PLATFORM = {
-  width: 30,
-  /** Deliberately long - leaves clear space for treadmills and UI later. */
-  length: 34,
+  /**
+   * The starting area spans the canyon from rim to rim.
+   *
+   * Half of this is exactly `BANK_WALL.rimX`, so the left wall lands against
+   * the canyon rim instead of stopping in mid air, and the headland beneath
+   * fills the gorge rather than floating over it. It also opens the left-hand
+   * side well past the treadmill row.
+   */
+  width: 66,
+  /** Long enough for the boot shop AND a clear run in front of the treadmills. */
+  length: 56,
   thickness: 2.5,
   topY: 0,
   x: 0,
@@ -45,17 +54,133 @@ export const SPAWN_PLATFORM = {
 } as const;
 
 /**
- * Gap (empty space along Z) before each trophy platform, in world units.
+ * Walls closing the starting area on three sides.
  *
- * The first gap is ~5 player widths (player is 1.4 wide). Later gaps grow
- * progressively but stay inside the sprint jump range: a full-speed jump
- * covers about 10.9 units (2 * jumpVelocity / gravity * runSpeed), so the
- * final gaps demand a full sprint while still leaving landing margin.
+ * Left (+X) and back (-Z) are solid walls; the right (-X) is closed by the Win
+ * Shop's own backdrop. Only the front (+Z), toward the gorge, is open, so the
+ * only way out of the start is to run the obby.
  */
-const PLATFORM_GAPS = [7, 7.5, 8, 8.4, 8.8, 9, 9.2, 9.4, 9.5] as const;
+export const SPAWN_WALLS = {
+  height: 8,
+  thickness: 1.6,
+  /** Inner face of the left wall - the largest X a player can reach. */
+  get leftInnerX(): number {
+    return SPAWN_PLATFORM.width / 2 - this.thickness;
+  },
+  /** Inner face of the back wall - the smallest Z a player can reach. */
+  get backInnerZ(): number {
+    return SPAWN_PLATFORM.centerZ - SPAWN_PLATFORM.length / 2 + this.thickness;
+  },
+} as const;
 
-/** Trophy award for each platform, in run order. */
-const TROPHY_VALUES = [1, 3, 5, 10, 15, 25, 35, 45, 100] as const;
+/**
+ * Gap (empty space along Z) before each trophy island, in world units.
+ *
+ * These gaps are what tie the route to progression. Reach grows with BOTH
+ * halves of levelling - one more backflip and a faster run - so measured reach
+ * at each level is:
+ *
+ *   level  1    2    3    4    5    6    7    8    10
+ *   reach  17   26   37   49   64   78   93   107  135
+ *
+ * The first two islands stay easy: 7 needs no flip at all and 13 is inside the
+ * single flip every level-1 player already has. After that each gap sits above
+ * the previous level's reach and comfortably inside its own, so island N
+ * demands a specific level - and the last one lands exactly on level 10, the
+ * rebirth-0 cap. Clearing the route and unlocking rebirth are the same moment.
+ */
+const AUTHORED_GAPS = [7, 13, 32, 43, 57, 70, 84, 98, 122, 140] as const;
+
+/** Trophy award for each authored platform, in run order. */
+const AUTHORED_VALUES = [1, 3, 5, 10, 15, 25, 35, 45, 100, 200] as const;
+
+/**
+ * Islands generated past the authored opening.
+ *
+ * The hand-tuned run above ends exactly at the rebirth-0 level cap, so
+ * everything from here on is endgame: it exists to give levels, movement speed
+ * and long backflip chains somewhere to matter. Rather than authoring another
+ * twenty rows of numbers by hand, the curve the opening already follows is
+ * simply continued.
+ */
+const EXTENDED_ISLANDS = 20;
+
+/**
+ * Growth per generated island.
+ *
+ * Both are read off the authored tail rather than invented: its last gap steps
+ * are x1.24 and x1.15, and its last reward steps are x2.22 and x2.0. Gaps
+ * compound gently because reach compounds gently; rewards compound harder so a
+ * deep run is worth the trip.
+ */
+const GAP_GROWTH = 1.15;
+const REWARD_GROWTH = 1.7;
+
+/** Round to two significant figures, so generated rewards read as round numbers. */
+const roundReward = (value: number): number => {
+  if (value < 100) return Math.round(value / 5) * 5;
+  const magnitude = 10 ** (Math.floor(Math.log10(value)) - 1);
+  return Math.round(value / magnitude) * magnitude;
+};
+
+/** Continue a curve for `count` more entries, compounding by `growth`. */
+const extend = (
+  authored: readonly number[],
+  count: number,
+  growth: number,
+  round: (value: number) => number,
+): number[] => {
+  const out = [...authored];
+  for (let i = 0; i < count; i += 1) {
+    const previous = out[out.length - 1] ?? 1;
+    out.push(round(previous * growth));
+  }
+  return out;
+};
+
+const PLATFORM_GAPS = extend(AUTHORED_GAPS, EXTENDED_ISLANDS, GAP_GROWTH, Math.round);
+const TROPHY_VALUES = extend(AUTHORED_VALUES, EXTENDED_ISLANDS, REWARD_GROWTH, roundReward);
+
+/**
+ * Themed name for each island, in run order. Shown floating above the island
+ * and used to colour its deck. Lives in shared because it is the island's
+ * identity, not a purely visual choice.
+ */
+const AREA_NAMES = [
+  'Starter Area',
+  'Cloud Area',
+  'Volcano Area',
+  'Tsunami Area',
+  'Hot Area',
+  'Nature Area',
+  'Crystal Area',
+  'Thunder Area',
+  'Ancient Area',
+  'Space Island',
+  // Past Space Island the route is deep space, and the names carry that.
+  'Nebula Area',
+  'Comet Area',
+  'Meteor Area',
+  'Orbit Area',
+  'Galaxy Area',
+  'Quasar Area',
+  'Pulsar Area',
+  'Vortex Area',
+  'Eclipse Area',
+  'Aurora Area',
+  'Supernova Area',
+  'Blackhole Area',
+  'Wormhole Area',
+  'Andromeda Area',
+  'Titan Area',
+  'Cosmos Area',
+  'Singularity Area',
+  'Infinity Area',
+  'Oblivion Area',
+  'Eternity Area',
+] as const;
+
+export type AreaName = (typeof AREA_NAMES)[number];
 
 /** One trophy platform. Only `centerZ` differs between entries. */
 export interface TrophyPlatform {
@@ -63,7 +188,9 @@ export interface TrophyPlatform {
   readonly index: number;
   /** Wins awarded for reaching this platform. */
   readonly value: number;
-  /** The ONLY per-platform varying field. */
+  /** Themed name floating above the island. */
+  readonly area: AreaName;
+  /** The ONLY varying GEOMETRY field. */
   readonly centerZ: number;
 }
 
@@ -97,6 +224,38 @@ export const COLLECTION_ZONE = {
 /** Centre of a platform's collection pad along X. */
 export const collectionZoneX = (): number => PLATFORM.x + COLLECTION_ZONE.offsetX;
 
+/** Z of the starting platform's front edge - where the route begins. */
+export const SPAWN_FRONT_Z = SPAWN_PLATFORM.centerZ + SPAWN_PLATFORM.length / 2;
+
+/**
+ * The head of the gorge: solid ground the starting area stands on.
+ *
+ * The start used to be a slab hanging in empty space with the river running
+ * underneath it. Instead the world is SOLID behind the front edge and the blue
+ * channel begins exactly there, so the river reads as flowing out from under
+ * the starting platform rather than past it.
+ *
+ * The mouth is only as wide as the gorge channel. Everything either side of it
+ * is wall, because the starting area is far wider than what it feeds into -
+ * see `WorldCollision.clampToBounds`.
+ */
+export const GORGE_HEAD = {
+  /** Z where the blue channel starts. Also the platform's front edge. */
+  riverStartZ: SPAWN_FRONT_Z,
+  /** Half-width of the solid headland. Meets the canyon rim on both sides. */
+  get halfWidth(): number {
+    return BANK_WALL.rimX;
+  },
+  /** How far below the river floor the headland's base reaches. */
+  get baseY(): number {
+    return GORGE.pitFloorY - 8;
+  },
+  /** Half-width of the opening the route runs out through. */
+  get mouthHalfWidth(): number {
+    return GORGE.channelHalfWidth;
+  },
+} as const;
+
 /** Centre of a platform's collection pad along Z. */
 export const collectionZoneZ = (platformCenterZ: number): number =>
   platformCenterZ + COLLECTION_ZONE.offsetZ;
@@ -112,6 +271,7 @@ const buildPlatforms = (): readonly TrophyPlatform[] => {
     platforms.push({
       index: i,
       value: TROPHY_VALUES[i] ?? 0,
+      area: AREA_NAMES[i] ?? 'Starter Area',
       centerZ: nearEdge + PLATFORM.length / 2,
     });
     edgeZ = nearEdge + PLATFORM.length;
@@ -145,8 +305,14 @@ export const GORGE = {
   pitFloorY: -14,
   /** How far the gorge visually extends behind the spawn. */
   startZ: -80,
-  /** How far the gorge visually extends past the route, toward the horizon. */
-  horizonZ: 620,
+  /**
+   * How far the gorge visually extends past the route.
+   *
+   * DERIVED from the route rather than a fixed number: the terrain is a
+   * handful of scaled boxes, so it costs nothing to be long, but stopping
+   * short would leave the last islands floating over open sky.
+   */
+  horizonZ: ROUTE_END_Z + 800,
 } as const;
 
 /**
@@ -155,6 +321,26 @@ export const GORGE = {
  * Mirrored on both sides. The slope is a single angled face rather than a
  * staircase, which is what gives the canyon its clean, steep silhouette.
  */
+/**
+ * The boot shop, along the RIGHT-hand side of the starting platform.
+ *
+ * Right is negative X: the player travels down +Z and the trophy pads sit at
+ * positive X ("far left"), so the shop faces them from the opposite side.
+ */
+export const BOOT_SHOP = {
+  /** X of the pedestal row. */
+  x: -10,
+  /** X of the backing wall and sign, just outside the walkable channel. */
+  wallX: -14.5,
+  /** Z of the first pedestal, and the spacing between them. */
+  firstZ: -15,
+  spacingZ: 5,
+  /** How close the player must get to a pedestal to buy its boot. */
+  pickupRadius: 2.4,
+  /** Height of the "Win Shop" sign above the platform. */
+  signY: 9,
+} as const;
+
 export const BANK_WALL = {
   /** X where the slope meets the water. */
   footX: 16,
@@ -178,66 +364,122 @@ export interface Redline {
   /** Height of the line above platform level. */
   readonly y: number;
   /**
-   * Tilt in radians about Z, so a line can slope from one bank to the other.
-   * Kept very small: the gorge is 26 units across, so even 0.05 rad shifts the
-   * line by half a unit at the island edges. The route must stay readable.
+   * Half-width of the line, measured to where it meets the bank.
+   *
+   * Derived from the height, so every line ENDS INSIDE the canyon wall rather
+   * than stopping in mid air. The bank slopes outward as it rises, so a high
+   * line is a longer line.
    */
-  readonly tilt: number;
+  readonly halfSpan: number;
 }
 
 /** Line thickness, used for both the mesh and the hit test. */
 export const REDLINE_RADIUS = 0.22;
 
+/**
+ * X where the canyon wall sits at a given height.
+ *
+ * The bank rises from (footX, footY) to (rimX, rimY); above the rim it is flat
+ * green, so the span stops just past the rim edge. Lines are built from this
+ * so both ends are always buried in terrain.
+ */
+export const bankXAtHeight = (worldY: number): number => {
+  const rise = BANK_WALL.rimY - BANK_WALL.footY;
+  const run = BANK_WALL.rimX - BANK_WALL.footX;
+  if (rise <= 0) return BANK_WALL.rimX;
+  const along = (worldY - BANK_WALL.footY) / rise;
+  const clamped = along < 0 ? 0 : along > 1 ? 1 : along;
+  // A little extra so the line visibly bites into the bank instead of just
+  // touching it.
+  return BANK_WALL.footX + clamped * run + 1.5;
+};
+
 const platformZ = (index: number): number => TROPHY_PLATFORMS[index]?.centerZ ?? 0;
+
+/**
+ * Heights of the three rows in a stacked column.
+ *
+ * The spacing is a hard constraint, not taste. The hit test treats the player
+ * as a box PLAYER_HEIGHT (3.2) tall, and each line is REDLINE_RADIUS thick, so
+ * threading between two rows needs more than 3.64 units of clear air. 4.8 apart
+ * leaves 4.36 - a real but passable window, reachable by the chained-flip arc
+ * that crosses these gaps in the first place.
+ */
+const ROW_HEIGHTS = [1.4, 6.2, 11] as const;
+
+/** Height of a lone line: low enough to jump, high enough to read. */
+const SINGLE_ROW_Y = 3.6;
+
+/** Heights used when a gap carries two separate lines. */
+const PAIR_HEIGHTS = [2.2, 7] as const;
+
+const line = (z: number, y: number): Redline => ({
+  z,
+  y,
+  halfSpan: bankXAtHeight(PLATFORM.topY + y),
+});
 
 /**
  * Hazard placement.
  *
- * The first redlines appear at the +35 platform (index 6); nothing earlier, so
- * the opening run stays clean. Difficulty then grows gradually: spacing
- * tightens, and a slight tilt appears and strengthens toward the end.
+ * Lines live in the GAPS between islands and never over one. An island is
+ * where a player lands, re-aims and launches; putting a hazard there punishes
+ * the one part of the route that has to be safe. A gap is the opposite - the
+ * player is already committed to an arc, so a line there is a shape to fly
+ * through.
  *
- * Lines sit OVER PLATFORMS, never spanning a gap. On a platform the player
- * chooses their answer - jump over a low line, run under a high one. A line
- * strung across a gap has no fair answer: the jump arc is under a metre high
- * at the launch edge (so a low line is unclearable) and peaks above head
- * height mid-gap (so a high line is unavoidable).
+ * Difficulty ramps by the pattern requested for this pass, one entry per gap
+ * from the +10 island onward:
  *
- * Player height is 3.2 and a jump peaks near 3.6, so y ~1.3 must be jumped and
- * y ~4.0 must be run under.
+ *   +10 -> +15   a single line, dead centre of the gap
+ *   +15 -> +25   two lines at different heights
+ *   +25 -> +35   one column of three stacked rows
+ *   +35 -> +45   the same again
+ *   +45 -> +100  the same again
+ *   +100 -> Space  three columns of three rows
  *
- * SPACING. A low line is only cleared once the player's FEET are above it,
- * which needs about 1.9 units of run-up before the line. A high line cannot be
- * launched from within about 0.9 units, because the player's head rises into it
- * almost immediately. Put a high line too close in front of a low one and those
- * two windows exclude each other, leaving no legal launch point at all - so a
- * pair on one island needs roughly 4.5 units between them. Most islands carry a
- * single line for exactly this reason.
+ * A "column" is one Z station; its "rows" are the stacked heights there.
  */
 const buildRedlines = (): readonly Redline[] => {
-  const p6 = platformZ(6);
-  const p7 = platformZ(7);
-  const p8 = platformZ(8);
-  /** Midpoint of the gap between two islands. */
-  const gapMid = (a: number, b: number): number => (a + b) / 2;
+  const lines: Redline[] = [];
 
-  return [
-    // Section 1: the +35 island. A single high line - run under it.
-    { z: p6 - 1.5, y: 4.0, tilt: 0 },
+  /** Midpoint of the empty space between two islands. */
+  const gapCentre = (before: number, after: number): number =>
+    (platformZ(before) + PLATFORM.length / 2 + (platformZ(after) - PLATFORM.length / 2)) / 2;
 
-    // Section 2: the +45 island. The other kind of hazard - jump this one.
-    { z: p7 - 1.0, y: 1.35, tilt: 0.025 },
+  /** Usable length of the empty space between two islands. */
+  const gapLength = (before: number, after: number): number =>
+    platformZ(after) - PLATFORM.length / 2 - (platformZ(before) + PLATFORM.length / 2);
 
-    // Section 3: strung high over the gap. A normal jump peaks with the head
-    // at 6.8, so this is only ever hit by a player who flips through it -
-    // a "do not flip here" hazard that the backflip lift makes meaningful.
-    { z: gapMid(p7, p8), y: 7.4, tilt: 0 },
+  const column = (z: number): void => {
+    for (const y of ROW_HEIGHTS) lines.push(line(z, y));
+  };
 
-    // Section 4: the +100 island. The only island carrying BOTH kinds, and the
-    // strongest tilt. They are far apart on purpose - see the spacing note.
-    { z: p8 - 4.5, y: 3.95, tilt: 0.04 },
-    { z: p8 - 0.5, y: 1.25, tilt: -0.05 },
-  ];
+  // +10 -> +15: exactly one line, at the dead centre of the gap.
+  lines.push(line(gapCentre(3, 4), SINGLE_ROW_Y));
+
+  // +15 -> +25: two lines, spaced a third of the gap apart.
+  {
+    const centre = gapCentre(4, 5);
+    const offset = gapLength(4, 5) / 6;
+    PAIR_HEIGHTS.forEach((y, i) => {
+      lines.push(line(centre + (i === 0 ? -offset : offset), y));
+    });
+  }
+
+  // +25 -> +35, +35 -> +45 and +45 -> +100: one three-row column each.
+  column(gapCentre(5, 6));
+  column(gapCentre(6, 7));
+  column(gapCentre(7, 8));
+
+  // +100 -> Space Island: three columns of three rows.
+  {
+    const centre = gapCentre(8, 9);
+    const spacing = gapLength(8, 9) / 4;
+    for (const step of [-1, 0, 1]) column(centre + step * spacing);
+  }
+
+  return lines;
 };
 
 export const REDLINES: readonly Redline[] = buildRedlines();

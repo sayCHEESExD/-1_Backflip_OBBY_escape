@@ -49,8 +49,15 @@ export class Foliage {
     const maxZ = GORGE.horizonZ;
     const span = Math.max(BANK_WALL.rimWidth - FOLIAGE.innerInset - FOLIAGE.outerInset, 2);
 
+    // Scale the count with the rim so density stays constant however long the
+    // route grows, and clamp it so it can never run away.
+    const perSide = Math.min(
+      FOLIAGE.maxPerSide,
+      Math.round(((maxZ - minZ) / 1000) * FOLIAGE.perThousandUnits),
+    );
+
     for (const side of [-1, 1] as const) {
-      for (let i = 0; i < FOLIAGE.perSide; i += 1) {
+      for (let i = 0; i < perSide; i += 1) {
         const x = side * (BANK_WALL.rimX + FOLIAGE.innerInset + random() * span);
         const z = minZ + random() * (maxZ - minZ);
         const scale = FOLIAGE.minScale + random() * (FOLIAGE.maxScale - FOLIAGE.minScale);

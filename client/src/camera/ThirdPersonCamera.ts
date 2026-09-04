@@ -4,18 +4,28 @@ import { PerspectiveCamera, Vector3 } from 'three';
 const FORWARD = new Vector3();
 const DESIRED = new Vector3();
 const LOOK_TARGET = new Vector3();
+const OFFSET = new Vector3();
 
 /**
- * Fixed-offset third-person follow camera.
+ * Third-person orbit camera.
  *
- * It trails directly behind the player's yaw with exponential smoothing. Free
- * orbit / touch look is intentionally out of scope for this milestone.
+ * The camera owns its OWN yaw and pitch, supplied by the mouse, and the player
+ * supplies only a position to orbit. That separation is the whole point: it
+ * used to trail the player's facing, so pressing A turned the character, which
+ * turned the camera, which turned what "forward" meant - the classic feedback
+ * loop where WASD ends up steering the view.
+ *
+ * The movement controller rotates its stick input by `yaw`, so the camera is
+ * the single source of "which way is forward" and the character's own facing
+ * follows where it is actually going.
  */
 export class ThirdPersonCamera {
   readonly camera: PerspectiveCamera;
 
   private readonly target = new Vector3();
-  private targetYaw = 0;
+  /** Orbit angles, written by the mouse. */
+  private orbitYaw = 0;
+  private orbitPitch = 0.22;
   private initialised = false;
 
   constructor() {
@@ -29,29 +39,47 @@ export class ThirdPersonCamera {
     this.camera.updateProjectionMatrix();
   }
 
-  /** Point the camera at a player position + yaw. */
-  setTarget(position: Vector3, yaw: number): void {
+  /** The direction the camera faces. This is what "forward" means. */
+  get yaw(): number {
+    return this.orbitYaw;
+  }
+
+  /** Follow this player position. The camera's own angles are unchanged. */
+  setTarget(position: Vector3): void {
     this.target.copy(position);
-    this.targetYaw = yaw;
+  }
+
+  /** Aim the orbit. Called every frame from the mouse look source. */
+  setOrbit(yaw: number, pitch: number): void {
+    this.orbitYaw = yaw;
+    this.orbitPitch = pitch;
   }
 
   update(delta: number): void {
-    FORWARD.set(Math.sin(this.targetYaw), 0, Math.cos(this.targetYaw));
+    // Where the camera sits: back along its own yaw, lifted by its pitch. The
+    // pitch shortens the horizontal reach as it rises, so the camera swings
+    // over the player rather than sliding away from them.
+    const cosPitch = Math.cos(this.orbitPitch);
+    const sinPitch = Math.sin(this.orbitPitch);
+
+    FORWARD.set(Math.sin(this.orbitYaw) * cosPitch, 0, Math.cos(this.orbitYaw) * cosPitch);
 
     DESIRED.copy(this.target)
       .addScaledVector(FORWARD, -CAMERA.distance)
-      .add(new Vector3(0, CAMERA.height, 0));
+      .add(OFFSET.set(0, CAMERA.height + sinPitch * CAMERA.distance, 0));
 
     if (!this.initialised) {
       this.camera.position.copy(DESIRED);
       this.initialised = true;
     } else {
-      // Frame-rate independent exponential smoothing.
+      // Frame-rate independent exponential smoothing. Only the POSITION is
+      // smoothed - the look angles are applied immediately, so the view never
+      // lags the mouse.
       const alpha = 1 - Math.exp(-CAMERA.followLerp * delta);
       this.camera.position.lerp(DESIRED, alpha);
     }
 
-    LOOK_TARGET.copy(this.target).add(new Vector3(0, CAMERA.lookAtHeight, 0));
+    LOOK_TARGET.copy(this.target).add(OFFSET.set(0, CAMERA.lookAtHeight, 0));
     this.camera.lookAt(LOOK_TARGET);
   }
 }

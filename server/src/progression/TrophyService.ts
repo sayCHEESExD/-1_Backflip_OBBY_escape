@@ -4,6 +4,7 @@ import {
   collectionZoneZ,
   PLATFORM,
   platformByIndex,
+  resolveTrophyReward,
 } from '@obby/shared';
 import type { PlayerState } from '../rooms/state/PlayerState.js';
 
@@ -23,7 +24,7 @@ const CLAIM_COOLDOWN_MS = 750;
 
 /** Outcome of a claim attempt. */
 export type ClaimResult =
-  | { readonly ok: true; readonly value: number }
+  | { readonly ok: true; readonly value: number; readonly base: number }
   | {
       readonly ok: false;
       readonly reason: 'unknown-platform' | 'already-claimed' | 'too-far' | 'cooldown';
@@ -97,8 +98,13 @@ export class TrophyService {
 
     claimedByPlayer.add(platformIndex);
     this.lastClaimAt.set(sessionId, now);
-    player.wins += platform.value;
-    return { ok: true, value: platform.value };
+
+    // The aura multiplies the payout - and only here, AFTER every check above
+    // has passed. `resolveTrophyReward` returns the base value for an aura the
+    // player does not own, so a forged slot pays exactly nothing extra.
+    const value = resolveTrophyReward(platform.value, player.auraSlot, player.ownedAuras);
+    player.wins += value;
+    return { ok: true, value, base: platform.value };
   }
 
   /** Does the player's last reported transform sit in this platform's zone? */

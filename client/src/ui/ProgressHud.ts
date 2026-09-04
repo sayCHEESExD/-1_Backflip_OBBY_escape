@@ -1,0 +1,206 @@
+import { formatSpeed, resolveLevel, type LevelProgress } from '@obby/shared';
+
+/**
+ * The Speed / level HUD, pinned bottom-centre.
+ *
+ * Purely a display of SERVER-AUTHORITATIVE state: it renders the replicated
+ * lifetime Speed total and the level that follows from it. Nothing here awards
+ * or predicts progress.
+ */
+export class ProgressHud {
+  private readonly root: HTMLDivElement;
+  private readonly jumpLabel: HTMLDivElement;
+  private readonly totalLabel: HTMLDivElement;
+  private readonly rebirthLabel: HTMLDivElement;
+  private readonly fill: HTMLDivElement;
+  private readonly levelLabel: HTMLDivElement;
+  private readonly amountLabel: HTMLDivElement;
+
+  private lastTotal = -1;
+  private lastLevel = -1;
+  private lastRebirths = -1;
+
+  constructor(parent: HTMLElement) {
+    injectStyles();
+
+    this.root = el('div', 'obby-hud');
+
+    this.jumpLabel = el('div', 'obby-hud__jump');
+    this.jumpLabel.hidden = true;
+
+    this.totalLabel = el('div', 'obby-hud__total');
+    this.totalLabel.textContent = 'Total Speed: 0';
+
+    this.rebirthLabel = el('div', 'obby-hud__rebirth');
+    this.rebirthLabel.textContent = 'Rebirth: +0%';
+
+    const bar = el('div', 'obby-hud__bar');
+    this.fill = el('div', 'obby-hud__fill');
+    this.levelLabel = el('div', 'obby-hud__level');
+    this.amountLabel = el('div', 'obby-hud__amount');
+
+    bar.append(this.fill, this.levelLabel, this.amountLabel);
+    this.root.append(this.rebirthLabel, this.jumpLabel, this.totalLabel, bar);
+    parent.appendChild(this.root);
+  }
+
+  /**
+   * @param totalSpeed lifetime Speed farmed, replicated from the server
+   * @param levelCap   highest reachable level for this player
+   * @param rebirths   replicated rebirth count (always 0 until rebirth ships)
+   */
+  update(totalSpeed: number, levelCap: number, rebirths: number): void {
+    const progress = resolveLevel(totalSpeed, levelCap);
+
+    if (totalSpeed !== this.lastTotal) {
+      this.lastTotal = totalSpeed;
+      this.totalLabel.textContent = `Total Speed: ${formatSpeed(totalSpeed)}`;
+      this.renderBar(progress);
+    }
+
+    if (progress.level !== this.lastLevel) {
+      this.lastLevel = progress.level;
+      this.levelLabel.textContent = `Level ${progress.level}`;
+      // A brief flash marks the moment a level (and a backflip) is gained.
+      this.root.classList.remove('obby-hud--levelup');
+      void this.root.offsetWidth;
+      this.root.classList.add('obby-hud--levelup');
+    }
+
+    if (rebirths !== this.lastRebirths) {
+      this.lastRebirths = rebirths;
+      this.rebirthLabel.textContent = `Rebirth: +${rebirths * 50}%`;
+    }
+  }
+
+  /**
+   * Backflips left in the current airborne window.
+   *
+   * Only shown in midair - on the ground the count is always full and the line
+   * would be noise.
+   */
+  setJumps(airborne: boolean, remaining: number, capacity: number): void {
+    if (!airborne) {
+      this.jumpLabel.hidden = true;
+      return;
+    }
+    this.jumpLabel.hidden = false;
+    this.jumpLabel.textContent = `Jump: ${remaining}/${capacity}`;
+  }
+
+  dispose(): void {
+    this.root.remove();
+  }
+
+  private renderBar(progress: LevelProgress): void {
+    this.fill.style.width = `${(progress.fraction * 100).toFixed(2)}%`;
+    this.amountLabel.textContent = progress.capped
+      ? 'MAX'
+      : `${formatSpeed(progress.into)}/${formatSpeed(progress.required)}`;
+  }
+}
+
+const el = <K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  className: string,
+): HTMLElementTagNameMap[K] => {
+  const node = document.createElement(tag);
+  node.className = className;
+  return node;
+};
+
+let stylesInjected = false;
+
+/** One stylesheet for the HUD, injected on first construction. */
+const injectStyles = (): void => {
+  if (stylesInjected) return;
+  stylesInjected = true;
+
+  const style = document.createElement('style');
+  style.textContent = `
+.obby-hud {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  width: min(680px, 92vw);
+  pointer-events: none;
+  user-select: none;
+  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+  z-index: 20;
+}
+.obby-hud__jump {
+  text-align: center;
+  font-size: clamp(19px, 3.4vw, 30px);
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: 0.01em;
+  text-shadow: 0 3px 0 #16202e, 0 -2px 0 #16202e, 2px 0 0 #16202e,
+    -2px 0 0 #16202e, 0 4px 8px rgba(0, 0, 0, 0.45);
+  margin-bottom: 4px;
+}
+.obby-hud__total {
+  text-align: center;
+  font-size: clamp(15px, 2.6vw, 21px);
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: 0.02em;
+  text-shadow: 0 2px 0 #16202e, 0 -2px 0 #16202e, 2px 0 0 #16202e,
+    -2px 0 0 #16202e, 0 3px 6px rgba(0, 0, 0, 0.45);
+  margin-bottom: 5px;
+}
+.obby-hud__rebirth {
+  position: absolute;
+  right: 4px;
+  top: -16px;
+  font-size: clamp(10px, 1.6vw, 13px);
+  font-weight: 800;
+  color: #e879ff;
+  text-shadow: 0 2px 0 #2a1038, 0 -1px 0 #2a1038, 1px 0 0 #2a1038, -1px 0 0 #2a1038;
+}
+.obby-hud__bar {
+  position: relative;
+  height: clamp(26px, 4.4vw, 34px);
+  border-radius: 6px;
+  background: #4a5666;
+  border: 2px solid #16202e;
+  overflow: hidden;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.35);
+}
+.obby-hud__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0%;
+  background: linear-gradient(#43b6ff, #1b8fe8);
+  border-right: 2px solid #0d5f9e;
+  transition: width 120ms linear;
+}
+.obby-hud__level,
+.obby-hud__amount {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  font-size: clamp(13px, 2.1vw, 17px);
+  font-weight: 800;
+  color: #ffffff;
+  text-shadow: 0 2px 0 #16202e, 0 -1px 0 #16202e, 1px 0 0 #16202e, -1px 0 0 #16202e;
+}
+.obby-hud__level { left: 12px; }
+.obby-hud__amount { right: 12px; }
+.obby-hud--levelup .obby-hud__bar {
+  animation: obby-hud-pop 420ms ease-out;
+}
+@keyframes obby-hud-pop {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 226, 120, 0.9); }
+  35% { transform: scale(1.035); box-shadow: 0 0 0 7px rgba(255, 226, 120, 0); }
+  100% { transform: scale(1); box-shadow: 0 3px 8px rgba(0, 0, 0, 0.35); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .obby-hud__fill { transition: none; }
+  .obby-hud--levelup .obby-hud__bar { animation: none; }
+}
+`;
+  document.head.appendChild(style);
+};

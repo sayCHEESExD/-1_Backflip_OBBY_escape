@@ -15,6 +15,11 @@ export class ProgressionStore {
     rebirths: 0,
     backflips: 0,
     wins: 0,
+    totalSpeed: 0,
+    bootSlot: 1,
+    ownedBoots: 1,
+    moveMultiplier: 1,
+    maxLevel: 10,
   };
 
   private readonly listeners = new Set<(value: PlayerProgression) => void>();
@@ -31,6 +36,11 @@ export class ProgressionStore {
       rebirths: state.rebirths,
       backflips: state.backflips,
       wins: state.wins,
+      totalSpeed: state.totalSpeed,
+      bootSlot: state.bootSlot,
+      ownedBoots: state.ownedBoots,
+      moveMultiplier: state.moveMultiplier,
+      maxLevel: state.maxLevel,
     };
 
     if (
@@ -38,7 +48,12 @@ export class ProgressionStore {
       next.progression === this.snapshot.progression &&
       next.rebirths === this.snapshot.rebirths &&
       next.backflips === this.snapshot.backflips &&
-      next.wins === this.snapshot.wins
+      next.wins === this.snapshot.wins &&
+      next.totalSpeed === this.snapshot.totalSpeed &&
+      next.bootSlot === this.snapshot.bootSlot &&
+      next.ownedBoots === this.snapshot.ownedBoots &&
+      next.moveMultiplier === this.snapshot.moveMultiplier &&
+      next.maxLevel === this.snapshot.maxLevel
     ) {
       return;
     }
