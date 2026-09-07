@@ -56,6 +56,15 @@ const lerp = (from: number, to: number, alpha: number): number =>
 /** Shared empty result, so a quiet frame allocates nothing. */
 const EMPTY_INPUTS: MoveMessage[] = [];
 
+/**
+ * How the player last arrived somewhere they did not walk to.
+ *
+ * `respawn` is a deliberate reset of the run; `correction` is the server
+ * disagreeing with prediction. Both skip the camera's smoothing, but only a
+ * respawn is allowed to be seen.
+ */
+export type PlacementKind = 'none' | 'respawn' | 'correction';
+
 /** One unacknowledged input, kept so it can be replayed after a correction. */
 interface PendingInput {
   seq: number;
@@ -142,6 +151,19 @@ export class LocalPlayer {
 
   /** Render-space offset that eases a small correction away. */
   private readonly correction = new Vector3();
+
+  /**
+   * How the player was last PLACED, cleared when read.
+   *
+   * The camera has to know three things apart: a player who moved (smooth), a
+   * player the server corrected (arrive silently), and a player who respawned
+   * (arrive, and play the spawn dolly). A correction that announced itself
+   * with a zoom would fire on ordinary packet loss.
+   *
+   * A flag rather than a callback, so the camera is still updated exactly once
+   * in the frame's normal order.
+   */
+  private placement: PlacementKind = 'none';
 
   private readonly animationInput: AnimationInput = createAnimationInput();
 
@@ -290,6 +312,7 @@ export class LocalPlayer {
     this.pending.length = 0;
     this.accumulator = 0;
     this.correction.set(0, 0, 0);
+    this.placement = 'respawn';
     this.character.resetAnimation();
     this.syncFromMotion();
     this.syncCharacter();
@@ -371,6 +394,15 @@ export class LocalPlayer {
       this.previous.x = this.motion.x;
       this.previous.y = this.motion.y;
       this.previous.z = this.motion.z;
+      // The camera must not ease across this either. A snap is the server
+      // PLACING the player, and during the round trip of a respawn there is a
+      // window where an in-flight patch still carries the pre-respawn
+      // position, which lands here.
+      //
+      // Reported as a CORRECTION, not a respawn: it must arrive invisibly.
+      // A respawn already pending is not downgraded - the dolly belongs to the
+      // respawn that is still on its way to being drawn.
+      if (this.placement === 'none') this.placement = 'correction';
     }
 
     this.syncFromMotion();
@@ -459,6 +491,17 @@ export class LocalPlayer {
       this.motion.z + this.correction.z,
       this.motion.treadmillTier > 0 ? 0 : this.horizontalSpeed,
     );
+  }
+
+  /**
+   * How the player was placed since this was last called, if at all.
+   *
+   * Reading CLEARS it, so exactly one frame reacts to a given placement.
+   */
+  consumePlacement(): PlacementKind {
+    const kind = this.placement;
+    this.placement = 'none';
+    return kind;
   }
 
   /** Copy the predicted motion out, for tests and diagnostics. */

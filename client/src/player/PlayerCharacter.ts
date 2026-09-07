@@ -7,7 +7,7 @@ import { TrailEffect } from './TrailEffect.js';
 import { PlayerRig } from '../animation/rig/PlayerRig.js';
 import { BootModel } from './BootModel.js';
 import { PLAYER_MODEL_YAW_OFFSET } from '../config/playerVisuals.js';
-import { playerModelLoader, type PlayerInstanceOptions } from './PlayerModelLoader.js';
+import { playerModelLoader } from './PlayerModelLoader.js';
 
 /**
  * The visual half of a player: a cloned FBX instance, its bone rig and its
@@ -45,8 +45,8 @@ export class PlayerCharacter {
   private readonly visual = new Group();
   private readonly model: Object3D;
 
-  constructor(options: PlayerInstanceOptions = {}) {
-    this.model = playerModelLoader.createInstance(options);
+  constructor() {
+    this.model = playerModelLoader.createInstance();
 
     // player.fbx already faces +Z; the offset exists so a re-authored model
     // can be corrected without touching gameplay code.

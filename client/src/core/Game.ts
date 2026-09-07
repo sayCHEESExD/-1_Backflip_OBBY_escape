@@ -154,6 +154,7 @@ export class Game {
         // The server's authoritative respawn. The client usually predicted it
         // already, so applying it again is intentionally idempotent.
         if (this.localPlayer) this.run.respawn(this.localPlayer, message.reason);
+        this.snapCameraIfPlaced();
       },
     });
 
@@ -221,6 +222,7 @@ export class Game {
       this.run.update(delta, player);
       this.shop.update(delta, player);
 
+      this.snapCameraIfPlaced();
       this.camera.setTarget(player.position);
       this.sendTransform(now, player);
 
@@ -300,6 +302,37 @@ export class Game {
     }
   }
 
+  /**
+   * Bring the camera with the player when the player was PLACED.
+   *
+   * A respawn - a fall, a redline, a banked trophy - and a reconcile snap both
+   * move the player somewhere they did not travel to. The camera's smoothing
+   * exists to absorb movement, and easing it across a placement is exactly
+   * what read as a zoom out followed by a zoom back in: the camera position
+   * and the look target are both derived from the smoothed follow point, so
+   * while it lagged, the camera sat far behind a player who had already
+   * arrived.
+   *
+   * A respawn additionally plays a short zoom-IN: the follow point is already
+   * at spawn on the first frame, so only the camera's distance moves and the
+   * shot stays framed on the player throughout. That is what separates it from
+   * the artefact it replaced, which drifted through every position between the
+   * death and spawn.
+   *
+   * Safe to call at any time - it does nothing unless a placement is pending,
+   * and reading the flag clears it, so one placement snaps exactly once.
+   */
+  private snapCameraIfPlaced(): void {
+    const player = this.localPlayer;
+    if (!player) return;
+    const placement = player.consumePlacement();
+    if (placement === 'none') return;
+    // Only a respawn plays the dolly. A correction is the server quietly
+    // disagreeing with prediction and happens on ordinary packet loss - a zoom
+    // there would turn a network hiccup into a cutscene.
+    this.camera.snapTo(player.position, placement === 'respawn');
+  }
+
   private onStatusChange(status: ConnectionStatus): void {
     this.overlay?.setStatus(status);
   }
@@ -325,6 +358,10 @@ export class Game {
       // The server has simulated further; snap prediction to it and replay
       // whatever it has not acknowledged yet.
       this.localPlayer?.reconcile(player);
+      // A reconcile SNAP places the player. Handled here rather than waiting
+      // for the next frame, because one frame of the camera easing across a
+      // placement is still a frame the player did not ask for.
+      this.snapCameraIfPlaced();
       return;
     }
     this.remotePlayers.apply(sessionId, player);

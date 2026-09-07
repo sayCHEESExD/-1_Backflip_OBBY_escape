@@ -15,7 +15,7 @@ const SCOPE = 'uiIcons';
  * browser silently receives HTML where it expected an image and draws nothing
  * at all. A blank button with no console output is very hard to read.
  */
-export type UiIconName = 'trail' | 'aura' | 'rebirth' | 'trophy' | 'shoe';
+export type UiIconName = 'trail' | 'aura' | 'rebirth' | 'trophy' | 'shoe' | 'run';
 
 /** What each icon was before it was art, and what it falls back to. */
 const EMOJI: Readonly<Record<UiIconName, string>> = {
@@ -24,6 +24,7 @@ const EMOJI: Readonly<Record<UiIconName, string>> = {
   rebirth: '🔄',
   trophy: '🏆',
   shoe: '👟',
+  run: '🏃',
 };
 
 /** URL an icon is served from. */

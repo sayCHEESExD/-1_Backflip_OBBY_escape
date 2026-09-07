@@ -152,8 +152,17 @@ const injectStyles = (): void => {
 .obby-hud__rebirth {
   position: absolute;
   right: 4px;
-  top: -16px;
-  font-size: clamp(10px, 1.6vw, 13px);
+  /*
+   * Anchored to the BOTTOM, above the bar.
+   *
+   * The HUD is pinned by its bottom edge, so showing the airborne jump counter
+   * grows the box UPWARD - and a top-anchored label rides that moving edge,
+   * which is why the rebirth figure jumped whenever jumps appeared. The bar is
+   * the one part of the HUD that never moves, so the label is measured from
+   * it: the same offset expression as the bar's own height, plus a gap.
+   */
+  bottom: calc(clamp(26px, 4.4vw, 34px) + 5px);
+  font-size: clamp(11px, 1.8vw, 15px);
   font-weight: 800;
   color: #e879ff;
   text-shadow: 0 2px 0 #2a1038, 0 -1px 0 #2a1038, 1px 0 0 #2a1038, -1px 0 0 #2a1038;

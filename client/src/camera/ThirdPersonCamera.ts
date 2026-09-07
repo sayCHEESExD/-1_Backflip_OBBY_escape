@@ -1,6 +1,21 @@
 import { CAMERA } from '@obby/shared';
 import { PerspectiveCamera, Vector3 } from 'three';
 
+/**
+ * Extra distance the camera starts a respawn from, in world units.
+ *
+ * This is a DELIBERATE effect, and it is not the artefact it replaced. The old
+ * zoom came from the follow point easing across the respawn gap, so the camera
+ * drifted through every position between where the player died and spawn. This
+ * moves only the DISTANCE along the camera's own axis: the follow point is
+ * already at spawn on the first frame, so the shot is framed correctly
+ * throughout and simply pulls in. Set to 0 to remove it.
+ */
+const RESPAWN_ZOOM_DISTANCE = 9;
+
+/** How fast that extra distance is given up. Higher is snappier. */
+const RESPAWN_ZOOM_RATE = 6.5;
+
 const FORWARD = new Vector3();
 const LOOK_TARGET = new Vector3();
 const OFFSET = new Vector3();
@@ -28,6 +43,8 @@ export class ThirdPersonCamera {
   private orbitYaw = 0;
   private orbitPitch = 0.22;
   private initialised = false;
+  /** Extra distance still to be given up by the respawn dolly. */
+  private zoomOffset = 0;
 
   constructor() {
     this.camera = new PerspectiveCamera(CAMERA.fov, 1, CAMERA.near, CAMERA.far);
@@ -48,6 +65,25 @@ export class ThirdPersonCamera {
   /** Follow this player position. The camera's own angles are unchanged. */
   setTarget(position: Vector3): void {
     this.target.copy(position);
+  }
+
+  /**
+   * Arrive at a position instead of easing to it. Used for a PLACEMENT.
+   *
+   * The smoothing exists to absorb a player who MOVED; a respawn or a server
+   * correction is a player who was PLACED, and easing across that gap is what
+   * produced the original zoom artefact - the camera position and the look
+   * target are both derived from the follow point, so while it lagged the
+   * camera sat a whole map behind a player who had already arrived.
+   *
+   * @param zoomIn play the respawn dolly. TRUE only for a respawn; a network
+   *               correction must arrive invisibly, not announce itself.
+   */
+  snapTo(position: Vector3, zoomIn = false): void {
+    this.target.copy(position);
+    this.followed.copy(position);
+    this.initialised = true;
+    this.zoomOffset = zoomIn ? RESPAWN_ZOOM_DISTANCE : 0;
   }
 
   /** Aim the orbit. Called every frame from the mouse look source. */
@@ -73,6 +109,14 @@ export class ThirdPersonCamera {
       this.followed.lerp(this.target, 1 - Math.exp(-CAMERA.followLerp * delta));
     }
 
+    // Give up the respawn dolly's extra distance. Frame-rate independent, and
+    // snapped to zero once it stops being visible so it cannot linger.
+    if (this.zoomOffset > 0) {
+      this.zoomOffset *= Math.exp(-RESPAWN_ZOOM_RATE * delta);
+      if (this.zoomOffset < 0.01) this.zoomOffset = 0;
+    }
+    const distance = CAMERA.distance + this.zoomOffset;
+
     // Where the camera sits: back along its own yaw, lifted by its pitch. The
     // pitch shortens the horizontal reach as it rises, so the camera swings
     // over the player rather than sliding away from them.
@@ -85,8 +129,8 @@ export class ThirdPersonCamera {
     // mouse, and the follow point is already smooth.
     this.camera.position
       .copy(this.followed)
-      .addScaledVector(FORWARD, -CAMERA.distance)
-      .add(OFFSET.set(0, CAMERA.height + sinPitch * CAMERA.distance, 0));
+      .addScaledVector(FORWARD, -distance)
+      .add(OFFSET.set(0, CAMERA.height + sinPitch * distance, 0));
 
     LOOK_TARGET.copy(this.followed).add(OFFSET.set(0, CAMERA.lookAtHeight, 0));
     this.camera.lookAt(LOOK_TARGET);

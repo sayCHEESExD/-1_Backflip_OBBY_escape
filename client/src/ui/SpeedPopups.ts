@@ -1,4 +1,5 @@
 import { formatSpeed } from '@obby/shared';
+import { iconMarkup } from '../config/uiIcons.js';
 
 /** Smallest accumulated gain worth showing. */
 const MIN_POPUP = 1;
@@ -63,7 +64,11 @@ export class SpeedPopups {
   private spawn(amount: number): void {
     const node = document.createElement('div');
     node.className = 'obby-pop';
-    node.textContent = `+${formatSpeed(amount)}`;
+    // innerHTML because the icon is an <img>. The content is our own config
+    // plus a formatted number - nothing here comes from a player or a server.
+    // `.obby-icon` is sized in `em`, so it tracks the popup's own responsive
+    // font-size on desktop and mobile without a second rule.
+    node.innerHTML = `${iconMarkup('run')}+${formatSpeed(amount)}`;
 
     // Scattered across the middle band, avoiding the HUD and the wins counter.
     node.style.left = `${18 + this.random() * 64}%`;
@@ -115,6 +120,19 @@ const injectStyles = (): void => {
   text-shadow: 0 3px 0 #16202e, 0 -2px 0 #16202e, 2px 0 0 #16202e,
     -2px 0 0 #16202e, 0 4px 8px rgba(0, 0, 0, 0.45);
   animation: obby-pop-rise 1.05s ease-out forwards;
+}
+/*
+ * The run icon is 1.5x the text, not 1x like the rail icons - a popup is
+ * glanced at, not read, so the glyph carries it. Still expressed in em units, so
+ * it tracks the popup's own responsive font-size on desktop and mobile.
+ * The vertical-align offset grows with it, keeping the icon centred on the
+ * number rather than riding up as it gets taller.
+ */
+.obby-pop .obby-icon {
+  width: 1.5em;
+  height: 1.5em;
+  margin-right: 0.14em;
+  vertical-align: -0.37em;
 }
 @keyframes obby-pop-rise {
   0% { opacity: 0; transform: translate(-50%, -50%) scale(0.7); }

@@ -1,7 +1,6 @@
 import type { PlayerMotionState } from '@obby/shared';
 import { Vector3 } from 'three';
 import { createAnimationInput, type AnimationInput } from '../animation/AnimationInput.js';
-import { tintForSession } from '../config/playerVisuals.js';
 import { PlayerCharacter } from './PlayerCharacter.js';
 
 /** Seconds to converge on a newly received network transform. */
@@ -47,7 +46,9 @@ const FLIP_WATCHDOG_SECONDS = 0.35;
  *
  * Remote players are non-colliding, so they can never block another player's
  * run through the obby. That is the whole meaning of "ghosted" here - they are
- * rendered completely normally.
+ * rendered completely normally: the SAME material and the SAME colours as the
+ * local player, with no per-session tint. Every player looks like the model as
+ * authored.
  *
  * Flip animation is DERIVED from authoritative state rather than driven by a
  * free-running timer: `flipCount` says a rotation began, and `grounded` says
@@ -87,7 +88,7 @@ export class RemotePlayer {
 
   constructor(sessionId: string) {
     this.sessionId = sessionId;
-    this.character = new PlayerCharacter({ tint: tintForSession(sessionId) });
+    this.character = new PlayerCharacter();
   }
 
   /** Feed the latest authoritative transform. Applied smoothly, not instantly. */

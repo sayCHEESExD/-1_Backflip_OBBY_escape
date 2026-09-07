@@ -30,12 +30,6 @@ const SCOPE = 'PlayerModelLoader';
 
 const IMAGE_EXTENSIONS = /\.(png|jpg|jpeg|tga|bmp|gif|webp)$/i;
 
-/** Per-instance visual overrides. Omit to share the default material. */
-export interface PlayerInstanceOptions {
-  /** Hex colour multiplied into the base texture. */
-  tint?: number;
-}
-
 /** What the loader actually found inside the FBX, verified at runtime. */
 export interface PlayerModelReport {
   /** Unique bone names, in skeleton order. */
@@ -90,23 +84,17 @@ export class PlayerModelLoader {
    * A fresh, independently-animatable copy of the player model.
    * Bones are deep-cloned so each character owns its own skeleton.
    *
-   * Passing `tint` allocates one material for this instance; otherwise every
-   * instance shares the single default material.
+   * Every instance shares the ONE default material - local and remote alike.
+   * There is deliberately no per-instance colour: a player is the model as
+   * authored, and a per-session tint is a second appearance to keep in step
+   * with the first for no gameplay benefit.
    */
-  createInstance(options: PlayerInstanceOptions = {}): Object3D {
+  createInstance(): Object3D {
     if (!this.prototype) {
       throw new Error('PlayerModelLoader.createInstance() called before load() resolved');
     }
 
-    const instance = cloneSkeleton(this.prototype);
-    if (options.tint !== undefined) {
-      const material = this.buildMaterial(new Color(options.tint));
-      instance.traverse((child) => {
-        if (child instanceof Mesh) child.material = material;
-      });
-    }
-
-    return instance;
+    return cloneSkeleton(this.prototype);
   }
 
   private async doLoad(): Promise<PlayerModelReport> {
@@ -185,16 +173,17 @@ export class PlayerModelLoader {
   }
 
   /**
-   * The player material. Always OPAQUE.
+   * The player material. ONE instance, opaque, untinted.
    *
-   * Every player renders normally, local and remote alike: "ghosted" means
-   * players do not collide, and nothing more. Transparency here cost a sorted
-   * draw and a depth-write exception for no gameplay benefit.
+   * Every player renders identically: "ghosted" means players do not collide,
+   * and nothing more. Neither transparency nor a per-session colour survives
+   * here - both were a second appearance to keep in step with the first, for
+   * no gameplay benefit.
    */
-  private buildMaterial(tint?: Color): MeshStandardMaterial {
+  private buildMaterial(): MeshStandardMaterial {
     return new MeshStandardMaterial({
       map: this.texture,
-      color: tint ?? new Color(0xffffff),
+      color: new Color(0xffffff),
       roughness: 0.85,
       metalness: 0.0,
     });

@@ -17,17 +17,27 @@ export const SIGN_FRAME_COLOR = 0x1a4f8a;
 /** How far the frame mesh oversails the panel, in world units. */
 export const SIGN_FRAME_MARGIN = 0.7;
 
+/**
+ * Size of supplied ICON ART, as a multiple of the label's font size.
+ *
+ * Art is drawn larger than the emoji it replaces: an emoji is a glyph tuned to
+ * sit on a text line, whereas a sign icon is read from across a gorge. The
+ * emoji path is deliberately left at its own metrics, so a sign with no art
+ * looks exactly as it always did.
+ */
+const ICON_IMAGE_SCALE = 1.5;
+
 export interface SignOptions {
   /** Emoji shown to the left of the label. Omit for text only. */
   readonly icon?: string;
   /**
    * Art drawn in the icon slot instead of the emoji.
    *
-   * Occupies the SAME box the emoji would have, so swapping one for the other
-   * cannot shift the label - the sign is laid out once and the icon slot is
-   * filled by whichever is available.
+   * Scaled to fit `ICON_IMAGE_SCALE` times the font size, preserving its own
+   * aspect ratio - the label is laid out around whatever width that produces,
+   * so art and emoji are interchangeable without shifting the text.
    */
-  readonly iconImage?: CanvasImageSource | null;
+  readonly iconImage?: HTMLImageElement | null;
   /** Canvas pixels. Keep the aspect close to the mesh's, or the text stretches. */
   readonly width?: number;
   readonly height?: number;
@@ -73,7 +83,13 @@ export const drawSign = (label: string, options: SignOptions = {}): HTMLCanvasEl
   ctx.font = textFont;
   const labelWidth = ctx.measureText(label).width;
   ctx.font = iconFont;
-  const iconWidth = options.icon ? ctx.measureText(options.icon).width : 0;
+  const emojiWidth = options.icon ? ctx.measureText(options.icon).width : 0;
+
+  // Art carries its OWN layout width. Advancing by the emoji's width instead
+  // would let a larger image run under the label and would mis-centre the
+  // group, since the centring below is measured from this same number.
+  const iconBox = fontSize * ICON_IMAGE_SCALE;
+  const iconWidth = options.iconImage ? iconBox : emojiWidth;
 
   const total = labelWidth + (options.icon ? iconWidth + gap : 0);
   let x = (width - total) / 2;
@@ -81,9 +97,16 @@ export const drawSign = (label: string, options: SignOptions = {}): HTMLCanvasEl
 
   if (options.icon) {
     if (options.iconImage) {
-      // Square, centred on the text baseline, matching the emoji's box.
-      const box = fontSize;
-      ctx.drawImage(options.iconImage, x, y - box / 2, box, box);
+      // CONTAIN, not stretch. The box is square but the art is not - every one
+      // of these files is a few percent off - so filling the box outright
+      // would squash it. Centred in the box and on the text's middle, so
+      // growing the icon stays balanced against the label rather than sinking
+      // below the line.
+      const art = options.iconImage;
+      const fit = Math.min(iconBox / art.naturalWidth, iconBox / art.naturalHeight);
+      const drawW = art.naturalWidth * fit;
+      const drawH = art.naturalHeight * fit;
+      ctx.drawImage(art, x + (iconBox - drawW) / 2, y - drawH / 2, drawW, drawH);
     } else {
       ctx.font = iconFont;
       ctx.fillText(options.icon, x, y);
