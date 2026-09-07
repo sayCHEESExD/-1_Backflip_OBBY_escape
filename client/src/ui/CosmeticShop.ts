@@ -1,4 +1,5 @@
 import { formatSpeed } from '@obby/shared';
+import { iconMarkup } from '../config/uiIcons.js';
 import { modalLayer } from './ModalLayer.js';
 
 /** One buyable row, as far as the shop is concerned. */
@@ -73,7 +74,9 @@ export class CosmeticShop {
     this.button = document.createElement('button');
     this.button.className = 'obby-cos-btn';
     this.button.type = 'button';
-    this.button.style.top = `${options.buttonTop}px`;
+    // A custom property rather than an inline `top`: an inline style outranks
+    // every selector, so the mobile stylesheet could never restack the rail.
+    this.button.style.setProperty('--obby-rail-top', `${options.buttonTop}px`);
     this.button.style.setProperty('--accent', options.accent);
     this.button.innerHTML =
       `<span class="obby-cos-btn__icon">${options.icon}</span><span>${options.title}</span>`;
@@ -213,7 +216,10 @@ export class CosmeticShop {
   }
 
   private repaint(): void {
-    this.walletLabel.textContent = `🏆 ${formatSpeed(this.wins)}`;
+    // innerHTML rather than textContent because the trophy is now an <img>.
+    // The content is our own config plus a formatted number - nothing here
+    // comes from another player or the server.
+    this.walletLabel.innerHTML = `${iconMarkup('trophy')} ${formatSpeed(this.wins)}`;
 
     for (const row of this.options.rows) {
       const node = this.rowNodes.get(row.slot);
@@ -237,7 +243,7 @@ export class CosmeticShop {
         action.className = 'obby-cos__action obby-cos__action--equip';
         action.disabled = false;
       } else {
-        action.textContent = `🏆 ${formatSpeed(row.cost)}`;
+        action.innerHTML = `${iconMarkup('trophy')} ${formatSpeed(row.cost)}`;
         action.className = `obby-cos__action obby-cos__action--buy${
           affordable ? '' : ' obby-cos__action--poor'
         }`;
@@ -261,28 +267,48 @@ const injectStyles = (): void => {
  */
 .obby-cos-btn {
   position: fixed;
-  left: 12px;
-  width: 68px;
-  height: 68px;
+  left: calc(12px * var(--obby-ui-scale, 1));
+  top: calc(var(--obby-rail-top, 70px) * var(--obby-ui-scale, 1));
+  width: calc(68px * var(--obby-ui-scale, 1));
+  height: calc(68px * var(--obby-ui-scale, 1));
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 1px;
   padding: 0;
-  border: 3px solid #ffffff;
-  border-radius: 13px;
+  border: calc(3px * var(--obby-ui-scale, 1)) solid #ffffff;
+  border-radius: calc(13px * var(--obby-ui-scale, 1));
   background-color: var(--accent, #7b5bff);
   background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.3), rgba(0, 0, 0, 0.3));
   color: #ffffff;
-  font: 900 12px/1 system-ui, "Segoe UI", Roboto, sans-serif;
+  font: 900 calc(12px * var(--obby-ui-scale, 1))/1 system-ui, "Segoe UI", Roboto, sans-serif;
   letter-spacing: 0.01em;
   text-shadow: 0 2px 0 #16202e, 0 -1px 0 #16202e, 1px 0 0 #16202e, -1px 0 0 #16202e;
   box-shadow: 0 4px 0 rgba(0, 0, 0, 0.45);
   cursor: pointer;
   z-index: 21;
 }
-.obby-cos-btn__icon { font-size: 27px; line-height: 1; }
+.obby-cos-btn__icon { font-size: calc(52px * var(--obby-ui-scale, 1)); line-height: 1; }
+/*
+ * The label sits OVER the bottom of the artwork rather than under it. At this
+ * icon size a stacked layout would not fit the tile, and the reference art has
+ * the two overlapping anyway.
+ */
+.obby-cos-btn > span:last-child { margin-top: calc(-9px * var(--obby-ui-scale, 1)); }
+/*
+ * Custom icon art. Sized in em units so one image tracks whatever text it
+ * sits with - 27px in the rail tile, 21px on mobile, 29px in the modal title
+ * - and swapping the file is the only thing needed to change the icon.
+ * (No backticks in here: this whole stylesheet is a template literal.)
+ */
+.obby-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  object-fit: contain;
+  vertical-align: -0.12em;
+}
 .obby-cos-btn:hover { filter: brightness(1.1); }
 .obby-cos-btn:active { transform: translateY(3px); box-shadow: none; }
 .obby-cos-btn--open { outline: 3px solid rgba(255, 255, 255, 0.75); outline-offset: 2px; }

@@ -10,6 +10,14 @@
     <style>
       :root {
         color-scheme: dark;
+        /*
+         * Size of the left rail - the Wins counter, Rebirth, the two cosmetic
+         * shops and the audio tile - as a multiplier on the original design.
+         * ONE number: every metric in those four components is expressed as a
+         * multiple of it, so the whole column grows together and nothing has
+         * to be re-spaced by hand.
+         */
+        --obby-ui-scale: 2;
       }
       * {
         margin: 0;
@@ -20,7 +28,17 @@
       body {
         width: 100%;
         height: 100%;
+        /*
+         * Dynamic viewport units: on iOS and Android the browser's own toolbar
+         * shrinks and grows as you scroll, and a percentage height is measured
+         * against the LARGE viewport - so the bottom of the game (the HUD, and
+         * now the touch controls) sat under the toolbar until you scrolled.
+         * The 100% above stays as the fallback for anything older.
+         */
+        height: 100dvh;
         overflow: hidden;
+        /* No pinch-zoom, no double-tap zoom, no rubber-banding over the game. */
+        touch-action: none;
         background: #0b1020;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         /* Mobile: stop the browser from hijacking drags/pinches over the canvas. */
@@ -32,6 +50,11 @@
       #app {
         position: fixed;
         inset: 0;
+        /*
+         * Fixed to the viewport rather than flowed, so a mobile browser
+         * resizing its chrome moves the canvas instead of scrolling the page.
+         */
+        touch-action: none;
       }
       #app canvas {
         display: block;
@@ -45,6 +68,8 @@
         display: grid;
         place-content: center;
         gap: 8px;
+        padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+          env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
         text-align: center;
         color: #cbd5f5;
         background: #0b1020;
@@ -60,7 +85,8 @@
        * connected. Everything it gates - Wins, levels, shops - is server-owned.
        */
       #boot.notice {
-        inset: auto 12px 12px auto;
+        inset: auto calc(env(safe-area-inset-right, 0px) + 12px)
+          calc(env(safe-area-inset-bottom, 0px) + 12px) auto;
         place-content: start;
         padding: 12px 14px;
         max-width: 40ch;

@@ -19,6 +19,8 @@ import { ProgressHud } from '../ui/ProgressHud.js';
 import { AURA_TIERS, TRAIL_TIERS } from '@obby/shared';
 import { AudioControls } from '../ui/AudioControls.js';
 import { CosmeticShop } from '../ui/CosmeticShop.js';
+import { iconMarkup } from '../config/uiIcons.js';
+import { injectMobileStyles } from '../ui/mobileStyles.js';
 import { modalLayer } from '../ui/ModalLayer.js';
 import { RebirthPanel } from '../ui/RebirthPanel.js';
 import { SpeedPopups } from '../ui/SpeedPopups.js';
@@ -73,6 +75,9 @@ export class Game {
   private fps = 0;
 
   constructor(container: HTMLElement) {
+    // Responsive overrides FIRST, so every panel built below is laid out for
+    // this screen on its first paint rather than after a reflow.
+    injectMobileStyles();
     this.renderer = new RendererManager(container);
     this.remotePlayers = new RemotePlayerManager(this.sceneManager.scene);
     this.overlay = clientConfig.debug ? new DebugOverlay(container) : null;
@@ -88,7 +93,7 @@ export class Game {
       container,
       {
         title: 'Trails',
-        icon: '💫',
+        icon: iconMarkup('trail'),
         effect: 'Speed',
         buttonTop: 146,
         accent: '#d05bd8',
@@ -111,7 +116,7 @@ export class Game {
       container,
       {
         title: 'Aura',
-        icon: '🌀',
+        icon: iconMarkup('aura'),
         effect: 'Wins',
         buttonTop: 222,
         accent: '#3aa8ff',

@@ -21,6 +21,7 @@ import {
   type BufferGeometry,
   type Material,
 } from 'three';
+import { loadIconImage } from '../config/uiIcons.js';
 import { WORLD_COLORS } from '../config/worldVisuals.js';
 import { createSneakerGeometry } from '../rendering/SneakerGeometry.js';
 import { SIGN_FRAME_COLOR, SIGN_FRAME_MARGIN, drawSign } from './SignPanel.js';
@@ -63,6 +64,8 @@ export class BootShop {
   private sneakerUpper: BufferGeometry | null = null;
   private sneakerSole: BufferGeometry | null = null;
   private signTexture: CanvasTexture | null = null;
+  /** Set by dispose(), so a late image load cannot touch a freed texture. */
+  private disposed = false;
   private spinTime = 0;
 
   private lastWins = -1;
@@ -119,6 +122,7 @@ export class BootShop {
   }
 
   dispose(): void {
+    this.disposed = true;
     for (const geometry of this.geometries) geometry.dispose();
     for (const plane of this.planes) plane.dispose();
     for (const material of this.materials) material.dispose();
@@ -234,6 +238,19 @@ export class BootShop {
     // The sign never changes, so it is not registered for redraws - but its
     // texture still needs disposing.
     this.signTexture = texture;
+
+    // One redraw when the art arrives. `disposed` guards a shop torn down
+    // while the image is still in flight.
+    void loadIconImage('trophy').then((image) => {
+      if (!image || this.disposed) return;
+      texture.image = drawSign('Win Shop', {
+        icon: '🏆',
+        iconImage: image,
+        width: SIGN_WIDTH,
+        height: SIGN_HEIGHT,
+      });
+      texture.needsUpdate = true;
+    });
 
     const panelGeometry = new PlaneGeometry(panelLength, panelHeight);
     this.planes.push(panelGeometry);

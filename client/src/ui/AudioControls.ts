@@ -19,7 +19,8 @@ export class AudioControls {
 
     this.root = document.createElement('div');
     this.root.className = 'obby-audio';
-    this.root.style.top = `${top}px`;
+    // See CosmeticShop: a custom property so the mobile stylesheet can move it.
+    this.root.style.setProperty('--obby-rail-top', `${top}px`);
 
     this.button = document.createElement('button');
     this.button.className = 'obby-audio__btn';
@@ -68,25 +69,26 @@ const injectStyles = (): void => {
   style.textContent = `
 .obby-audio {
   position: fixed;
-  left: 12px;
-  width: 68px;
+  left: calc(12px * var(--obby-ui-scale, 1));
+  top: calc(var(--obby-rail-top, 298px) * var(--obby-ui-scale, 1));
+  width: calc(68px * var(--obby-ui-scale, 1));
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
+  gap: calc(5px * var(--obby-ui-scale, 1));
   z-index: 21;
 }
 /* Same rail tile as the other launchers - see CosmeticShop for the pattern. */
 .obby-audio__btn {
-  width: 68px;
-  height: 44px;
+  width: calc(68px * var(--obby-ui-scale, 1));
+  height: calc(44px * var(--obby-ui-scale, 1));
   padding: 0;
-  border: 3px solid #ffffff;
-  border-radius: 13px;
+  border: calc(3px * var(--obby-ui-scale, 1)) solid #ffffff;
+  border-radius: calc(13px * var(--obby-ui-scale, 1));
   background-color: #2f7fd0;
   background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.3), rgba(0, 0, 0, 0.3));
   color: #ffffff;
-  font: 900 20px/1 system-ui, "Segoe UI", Roboto, sans-serif;
+  font: 900 calc(20px * var(--obby-ui-scale, 1))/1 system-ui, "Segoe UI", Roboto, sans-serif;
   box-shadow: 0 4px 0 rgba(0, 0, 0, 0.45);
   cursor: pointer;
 }
@@ -95,8 +97,8 @@ const injectStyles = (): void => {
 .obby-audio--muted .obby-audio__btn { background-color: #5b6a86; }
 
 .obby-audio__slider {
-  width: 66px;
-  height: 14px;
+  width: calc(66px * var(--obby-ui-scale, 1));
+  height: calc(14px * var(--obby-ui-scale, 1));
   margin: 0;
   cursor: pointer;
   accent-color: #3aa8ff;

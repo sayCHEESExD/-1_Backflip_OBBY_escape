@@ -20,6 +20,14 @@ export const SIGN_FRAME_MARGIN = 0.7;
 export interface SignOptions {
   /** Emoji shown to the left of the label. Omit for text only. */
   readonly icon?: string;
+  /**
+   * Art drawn in the icon slot instead of the emoji.
+   *
+   * Occupies the SAME box the emoji would have, so swapping one for the other
+   * cannot shift the label - the sign is laid out once and the icon slot is
+   * filled by whichever is available.
+   */
+  readonly iconImage?: CanvasImageSource | null;
   /** Canvas pixels. Keep the aspect close to the mesh's, or the text stretches. */
   readonly width?: number;
   readonly height?: number;
@@ -72,8 +80,14 @@ export const drawSign = (label: string, options: SignOptions = {}): HTMLCanvasEl
   const y = height / 2 + fontSize * 0.04;
 
   if (options.icon) {
-    ctx.font = iconFont;
-    ctx.fillText(options.icon, x, y);
+    if (options.iconImage) {
+      // Square, centred on the text baseline, matching the emoji's box.
+      const box = fontSize;
+      ctx.drawImage(options.iconImage, x, y - box / 2, box, box);
+    } else {
+      ctx.font = iconFont;
+      ctx.fillText(options.icon, x, y);
+    }
     x += iconWidth + gap;
   }
 

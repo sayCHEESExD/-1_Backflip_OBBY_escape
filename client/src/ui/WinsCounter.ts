@@ -1,4 +1,5 @@
 import { formatSpeed } from '@obby/shared';
+import { iconElement } from '../config/uiIcons.js';
 
 /**
  * Trophy wins total, pinned top-left.
@@ -19,7 +20,7 @@ export class WinsCounter {
 
     const icon = document.createElement('span');
     icon.className = 'obby-wins__icon';
-    icon.textContent = '🏆';
+    icon.append(iconElement('trophy'));
 
     this.amount = document.createElement('span');
     this.amount.className = 'obby-wins__amount';
@@ -57,13 +58,13 @@ const injectStyles = (): void => {
   style.textContent = `
 .obby-wins {
   position: fixed;
-  left: 14px;
-  top: 14px;
+  left: calc(14px * var(--obby-ui-scale, 1));
+  top: calc(14px * var(--obby-ui-scale, 1));
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 16px 6px 10px;
-  border-radius: 10px;
+  gap: calc(8px * var(--obby-ui-scale, 1));
+  padding: calc(6px * var(--obby-ui-scale, 1)) calc(16px * var(--obby-ui-scale, 1)) calc(6px * var(--obby-ui-scale, 1)) calc(10px * var(--obby-ui-scale, 1));
+  border-radius: calc(10px * var(--obby-ui-scale, 1));
   background: rgba(14, 22, 34, 0.72);
   border: 2px solid #0b111b;
   box-shadow: 0 3px 8px rgba(0, 0, 0, 0.35);
@@ -73,12 +74,12 @@ const injectStyles = (): void => {
   z-index: 20;
 }
 .obby-wins__icon {
-  font-size: clamp(20px, 3vw, 28px);
+  font-size: calc(clamp(20px, 3vw, 28px) * var(--obby-ui-scale, 1));
   line-height: 1;
   filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.5));
 }
 .obby-wins__amount {
-  font-size: clamp(17px, 2.7vw, 25px);
+  font-size: calc(clamp(17px, 2.7vw, 25px) * var(--obby-ui-scale, 1));
   font-weight: 800;
   color: #ffffff;
   text-shadow: 0 2px 0 #16202e, 0 -1px 0 #16202e, 1px 0 0 #16202e, -1px 0 0 #16202e;

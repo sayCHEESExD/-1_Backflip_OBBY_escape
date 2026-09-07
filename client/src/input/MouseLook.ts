@@ -16,6 +16,10 @@ const MAX_PITCH = 1.15;
  * Pointer lock is requested by clicking the canvas, which is the only gesture
  * a browser accepts. While a UI panel is up the source is suppressed and the
  * lock is released, so the cursor is available for the shop buttons.
+ *
+ * Touch look goes through the SAME accumulator via `addLookDelta`, so the
+ * pitch limits, the yaw wrap and the suppression rule exist once and cannot
+ * drift between the two devices.
  */
 export class MouseLook {
   private canvas: HTMLElement | null = null;
@@ -89,9 +93,21 @@ export class MouseLook {
   private readonly onMouseMove = (event: MouseEvent): void => {
     if (this.suppressed) return;
     if (!this.locked && !this.dragging) return;
+    this.addLookDelta(event.movementX * SENSITIVITY, event.movementY * SENSITIVITY);
+  };
 
-    this.yawValue -= event.movementX * SENSITIVITY;
-    this.pitchValue += event.movementY * SENSITIVITY;
+  /**
+   * Apply a look delta already scaled to RADIANS.
+   *
+   * The one place yaw and pitch are written. Mouse movement and touch drags
+   * both arrive here, so neither can invent its own pitch clamp.
+   */
+  addLookDelta(deltaYaw: number, deltaPitch: number): void {
+    if (this.suppressed) return;
+    if (!Number.isFinite(deltaYaw) || !Number.isFinite(deltaPitch)) return;
+
+    this.yawValue -= deltaYaw;
+    this.pitchValue += deltaPitch;
 
     // Wrapping keeps the accumulated yaw finite over a long session.
     if (this.yawValue > Math.PI) this.yawValue -= Math.PI * 2;
@@ -103,7 +119,7 @@ export class MouseLook {
         : this.pitchValue > MAX_PITCH
           ? MAX_PITCH
           : this.pitchValue;
-  };
+  }
 
   private readonly onBlur = (): void => {
     this.dragging = false;

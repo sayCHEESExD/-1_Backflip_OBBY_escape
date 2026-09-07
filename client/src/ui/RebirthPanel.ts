@@ -1,4 +1,5 @@
 import { maxLevelForRebirth, rebirthMultiplier } from '@obby/shared';
+import { iconMarkup } from '../config/uiIcons.js';
 import { modalLayer } from './ModalLayer.js';
 
 /** What the panel needs to render, all replicated from the server. */
@@ -38,7 +39,7 @@ export class RebirthPanel {
     this.button.className = 'obby-rebirth-btn';
     this.button.type = 'button';
     this.button.innerHTML =
-      '<span class="obby-rebirth-btn__icon">🔄</span><span>Rebirth</span>';
+      `<span class="obby-rebirth-btn__icon">${iconMarkup('rebirth')}</span><span>Rebirth</span>`;
     this.button.addEventListener('click', () => this.toggle());
     parent.appendChild(this.button);
 
@@ -55,7 +56,7 @@ export class RebirthPanel {
     close.addEventListener('click', () => this.close());
 
     const title = div('obby-rebirth__title');
-    title.innerHTML = '<span class="obby-rebirth__title-icon">🔄</span>Rebirth';
+    title.innerHTML = `<span class="obby-rebirth__title-icon">${iconMarkup('rebirth')}</span>Rebirth`;
 
     const columns = div('obby-rebirth__columns');
     const beforeCol = div('obby-rebirth__col');
@@ -194,28 +195,29 @@ const injectStyles = (): void => {
 /* Same rail tile as the shop launchers - see CosmeticShop for the pattern. */
 .obby-rebirth-btn {
   position: fixed;
-  left: 12px;
-  top: 70px;
-  width: 68px;
-  height: 68px;
+  left: calc(12px * var(--obby-ui-scale, 1));
+  top: calc(70px * var(--obby-ui-scale, 1));
+  width: calc(68px * var(--obby-ui-scale, 1));
+  height: calc(68px * var(--obby-ui-scale, 1));
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 1px;
   padding: 0;
-  border-radius: 13px;
-  border: 3px solid #ffffff;
+  border-radius: calc(13px * var(--obby-ui-scale, 1));
+  border: calc(3px * var(--obby-ui-scale, 1)) solid #ffffff;
   background-color: #4aa3e8;
   background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.3), rgba(0, 0, 0, 0.3));
   color: #ffffff;
-  font: 900 12px/1 system-ui, "Segoe UI", Roboto, sans-serif;
+  font: 900 calc(12px * var(--obby-ui-scale, 1))/1 system-ui, "Segoe UI", Roboto, sans-serif;
   text-shadow: 0 2px 0 #16202e, 0 -1px 0 #16202e, 1px 0 0 #16202e, -1px 0 0 #16202e;
   cursor: pointer;
   z-index: 21;
   box-shadow: 0 4px 0 rgba(0, 0, 0, 0.45);
 }
-.obby-rebirth-btn__icon { font-size: 27px; line-height: 1; }
+.obby-rebirth-btn__icon { font-size: calc(52px * var(--obby-ui-scale, 1)); line-height: 1; }
+.obby-rebirth-btn > span:last-child { margin-top: calc(-9px * var(--obby-ui-scale, 1)); }
 .obby-rebirth-btn:hover { filter: brightness(1.1); }
 .obby-rebirth-btn:active { transform: translateY(3px); box-shadow: none; }
 .obby-rebirth-btn--ready { animation: obby-rebirth-ready 1.4s ease-in-out infinite; }

@@ -19,6 +19,7 @@ import {
   type BufferGeometry,
   type Material,
 } from 'three';
+import { loadIconImage } from '../config/uiIcons.js';
 import { SIGN_FRAME_COLOR, SIGN_FRAME_MARGIN, drawSign } from './SignPanel.js';
 
 /** Height of the kerb that frames the floor on three sides. */
@@ -58,6 +59,8 @@ export class TreadmillArea {
   private readonly geometries: BufferGeometry[] = [];
   private readonly materials: Material[] = [];
   private texture: CanvasTexture | null = null;
+  /** Set once dispose() has run, so a late image load cannot touch the texture. */
+  private disposed = false;
 
   constructor() {
     // The footprint is shared config, so the grass around it is cut from the
@@ -76,6 +79,7 @@ export class TreadmillArea {
   }
 
   dispose(): void {
+    this.disposed = true;
     for (const geometry of this.geometries) geometry.dispose();
     for (const material of this.materials) material.dispose();
     this.texture?.dispose();
@@ -169,6 +173,16 @@ export class TreadmillArea {
     const texture = new CanvasTexture(drawSign('Train Speed', { icon: '👟' }));
     texture.colorSpace = SRGBColorSpace;
     this.texture = texture;
+
+    // The emoji is drawn first so the sign is readable on the very first
+    // frame; the art replaces it when it arrives. `disposed` guards the case
+    // where the area is torn down while the image is still loading.
+    void loadIconImage('shoe').then((image) => {
+      if (!image || this.disposed) return;
+      const redrawn = drawSign('Train Speed', { icon: '👟', iconImage: image });
+      texture.image = redrawn;
+      texture.needsUpdate = true;
+    });
 
     const panelGeometry = new PlaneGeometry(BANNER_WIDTH, BANNER_HEIGHT);
     const panelMaterial = new MeshBasicMaterial({
