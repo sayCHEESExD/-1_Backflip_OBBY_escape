@@ -30,12 +30,10 @@ const SCOPE = 'PlayerModelLoader';
 
 const IMAGE_EXTENSIONS = /\.(png|jpg|jpeg|tga|bmp|gif|webp)$/i;
 
-/** Per-instance visual overrides. Omit both to share the default material. */
+/** Per-instance visual overrides. Omit to share the default material. */
 export interface PlayerInstanceOptions {
   /** Hex colour multiplied into the base texture. */
   tint?: number;
-  /** 0..1. Anything below 1 renders the instance as a translucent ghost. */
-  opacity?: number;
 }
 
 /** What the loader actually found inside the FBX, verified at runtime. */
@@ -92,8 +90,8 @@ export class PlayerModelLoader {
    * A fresh, independently-animatable copy of the player model.
    * Bones are deep-cloned so each character owns its own skeleton.
    *
-   * Passing `tint` or `opacity` allocates one material for this instance;
-   * otherwise every instance shares the single default material.
+   * Passing `tint` allocates one material for this instance; otherwise every
+   * instance shares the single default material.
    */
   createInstance(options: PlayerInstanceOptions = {}): Object3D {
     if (!this.prototype) {
@@ -101,13 +99,8 @@ export class PlayerModelLoader {
     }
 
     const instance = cloneSkeleton(this.prototype);
-    const needsOwnMaterial = options.tint !== undefined || options.opacity !== undefined;
-
-    if (needsOwnMaterial) {
-      const material = this.buildMaterial(
-        options.tint === undefined ? undefined : new Color(options.tint),
-        options.opacity,
-      );
+    if (options.tint !== undefined) {
+      const material = this.buildMaterial(new Color(options.tint));
       instance.traverse((child) => {
         if (child instanceof Mesh) child.material = material;
       });
@@ -191,17 +184,19 @@ export class PlayerModelLoader {
     });
   }
 
-  private buildMaterial(tint?: Color, opacity?: number): MeshStandardMaterial {
-    const transparent = opacity !== undefined && opacity < 1;
+  /**
+   * The player material. Always OPAQUE.
+   *
+   * Every player renders normally, local and remote alike: "ghosted" means
+   * players do not collide, and nothing more. Transparency here cost a sorted
+   * draw and a depth-write exception for no gameplay benefit.
+   */
+  private buildMaterial(tint?: Color): MeshStandardMaterial {
     return new MeshStandardMaterial({
       map: this.texture,
       color: tint ?? new Color(0xffffff),
       roughness: 0.85,
       metalness: 0.0,
-      transparent,
-      opacity: opacity ?? 1,
-      // Ghosts must not occlude each other or punch holes in the scene.
-      depthWrite: !transparent,
     });
   }
 

@@ -123,8 +123,16 @@ engine. Do not add a framework or a build tool without a concrete need.
 
 **Multiplayer**
 
-- Other players are **ghosted**: translucent and non-colliding, so they can
-  never block another player's run.
+- Other players are **ghosted**, and that word means EXACTLY one thing: they do
+  not collide, so they can never block another player's run. They render
+  completely normally - opaque, no fade, no ghost material. `buildMaterial` is
+  opaque for every player and there is no per-instance opacity to pass.
+- Remote flip animation is DERIVED from authoritative state, never from a
+  free-running queue. `flipCount` is a LIFETIME total, so it only means
+  anything as a difference against a baseline the client took on FIRST sight -
+  treating it as "flips to play" replays a stranger's whole session as one
+  endless spin. Flips are queued only while the server has the player
+  airborne, the queue is bounded, and `grounded` ends the sequence outright.
 
 ## Assets
 

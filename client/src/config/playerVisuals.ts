@@ -12,9 +12,6 @@
  */
 export const PLAYER_MODEL_YAW_OFFSET = 0;
 
-/** Opacity used for other players. Ghosted players never block the obby. */
-export const GHOST_OPACITY = 0.45;
-
 /**
  * Tint palette for remote players, chosen by a hash of the session id so the
  * same player looks consistent to everyone in the room.
