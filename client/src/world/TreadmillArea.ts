@@ -20,7 +20,13 @@ import {
   type Material,
 } from 'three';
 import { loadIconImage } from '../config/uiIcons.js';
-import { SIGN_FRAME_COLOR, SIGN_FRAME_MARGIN, drawSign } from './SignPanel.js';
+import {
+  SIGN_FRAME_MARGIN,
+  SIGN_GLOW_STANDOFF,
+  createSignFrameMaterial,
+  createSignGlow,
+  drawSign,
+} from './SignPanel.js';
 
 /** Height of the kerb that frames the floor on three sides. */
 const KERB_HEIGHT = 0.55;
@@ -59,6 +65,7 @@ export class TreadmillArea {
   private readonly geometries: BufferGeometry[] = [];
   private readonly materials: Material[] = [];
   private texture: CanvasTexture | null = null;
+  private glowTexture: CanvasTexture | null = null;
   /** Set once dispose() has run, so a late image load cannot touch the texture. */
   private disposed = false;
 
@@ -83,6 +90,7 @@ export class TreadmillArea {
     for (const geometry of this.geometries) geometry.dispose();
     for (const material of this.materials) material.dispose();
     this.texture?.dispose();
+    this.glowTexture?.dispose();
   }
 
   /** A dark tiled bay inlaid into the spawn grass. Top face at platform level. */
@@ -162,13 +170,28 @@ export class TreadmillArea {
       BANNER_HEIGHT + SIGN_FRAME_MARGIN,
       0.4,
     );
-    const frameMaterial = new MeshLambertMaterial({ color: SIGN_FRAME_COLOR });
+    const frameMaterial = createSignFrameMaterial();
     this.geometries.push(frameGeometry);
     this.materials.push(frameMaterial);
 
+    const frameY = SPAWN_PLATFORM.topY + BANNER_Y;
+    const frameZ = TREADMILL_CONSOLE_Z + BANNER_STANDOFF;
     const frame = new Mesh(frameGeometry, frameMaterial);
-    frame.position.set(x, SPAWN_PLATFORM.topY + BANNER_Y, TREADMILL_CONSOLE_Z + BANNER_STANDOFF);
+    frame.position.set(x, frameY, frameZ);
     this.root.add(frame);
+
+    // Behind the frame, in the standoff gap the banner already keeps clear of
+    // the back wall's coping - so the halo lands on the wall rather than
+    // inside it.
+    const glow = createSignGlow(
+      BANNER_WIDTH + SIGN_FRAME_MARGIN,
+      BANNER_HEIGHT + SIGN_FRAME_MARGIN,
+    );
+    glow.mesh.position.set(x, frameY, frameZ - SIGN_GLOW_STANDOFF);
+    this.root.add(glow.mesh);
+    this.geometries.push(glow.geometry);
+    this.materials.push(glow.material);
+    this.glowTexture = glow.texture;
 
     const texture = new CanvasTexture(drawSign('Train Speed', { icon: '👟' }));
     texture.colorSpace = SRGBColorSpace;

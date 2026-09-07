@@ -24,7 +24,13 @@ import {
 import { loadIconImage } from '../config/uiIcons.js';
 import { WORLD_COLORS } from '../config/worldVisuals.js';
 import { createSneakerGeometry } from '../rendering/SneakerGeometry.js';
-import { SIGN_FRAME_COLOR, SIGN_FRAME_MARGIN, drawSign } from './SignPanel.js';
+import {
+  SIGN_FRAME_MARGIN,
+  SIGN_GLOW_STANDOFF,
+  createSignFrameMaterial,
+  createSignGlow,
+  drawSign,
+} from './SignPanel.js';
 
 /** Sign canvas. The mesh is sized to this aspect so the text is not stretched. */
 const SIGN_WIDTH = 1024;
@@ -64,6 +70,7 @@ export class BootShop {
   private sneakerUpper: BufferGeometry | null = null;
   private sneakerSole: BufferGeometry | null = null;
   private signTexture: CanvasTexture | null = null;
+  private glowTexture: CanvasTexture | null = null;
   /** Set by dispose(), so a late image load cannot touch a freed texture. */
   private disposed = false;
   private spinTime = 0;
@@ -128,6 +135,7 @@ export class BootShop {
     for (const material of this.materials) material.dispose();
     for (const label of this.labels) label.texture.dispose();
     this.signTexture?.dispose();
+    this.glowTexture?.dispose();
     this.sneakerUpper?.dispose();
     this.sneakerSole?.dispose();
   }
@@ -223,13 +231,28 @@ export class BootShop {
       panelHeight + SIGN_FRAME_MARGIN,
       panelLength + SIGN_FRAME_MARGIN,
     );
-    const frameMaterial = new MeshLambertMaterial({ color: SIGN_FRAME_COLOR });
+    const frameMaterial = createSignFrameMaterial();
     this.geometries.push(frameGeometry);
     this.materials.push(frameMaterial);
 
+    const frameX = BOOT_SHOP.wallX + 1.05;
     const frame = new Mesh(frameGeometry, frameMaterial);
-    frame.position.set(BOOT_SHOP.wallX + 1.05, y, centerZ);
+    frame.position.set(frameX, y, centerZ);
     this.root.add(frame);
+
+    // The halo sits BEHIND the frame, between it and the wall, so the frame
+    // masks the middle and only the bleed around its edges shows.
+    const glow = createSignGlow(
+      panelLength + SIGN_FRAME_MARGIN,
+      panelHeight + SIGN_FRAME_MARGIN,
+    );
+    glow.mesh.position.set(frameX - SIGN_GLOW_STANDOFF, y, centerZ);
+    // Face +X, into the walkable side, exactly like the panel below.
+    glow.mesh.rotation.y = Math.PI / 2;
+    this.root.add(glow.mesh);
+    this.planes.push(glow.geometry);
+    this.materials.push(glow.material);
+    this.glowTexture = glow.texture;
 
     const texture = new CanvasTexture(
       drawSign('Win Shop', { icon: '🏆', width: SIGN_WIDTH, height: SIGN_HEIGHT }),

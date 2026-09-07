@@ -7,6 +7,18 @@
  * copy is how the two would drift apart the first time either is tweaked.
  */
 
+import {
+  AdditiveBlending,
+  Color,
+  DoubleSide,
+  Mesh,
+  MeshBasicMaterial,
+  MeshLambertMaterial,
+  PlaneGeometry,
+  type CanvasTexture,
+} from 'three';
+import { createGlowTexture } from './GlowTexture.js';
+
 /** Panel fill and its inner stroke. */
 const PANEL_FILL = '#2a8fe0';
 const PANEL_STROKE = '#7fd6ff';
@@ -16,6 +28,92 @@ export const SIGN_FRAME_COLOR = 0x1a4f8a;
 
 /** How far the frame mesh oversails the panel, in world units. */
 export const SIGN_FRAME_MARGIN = 0.7;
+
+/** Neon blue the sign frames are lit with. */
+export const SIGN_GLOW_COLOR = 0x35d6ff;
+
+/** How far the halo reaches past the frame, in WORLD units. */
+const GLOW_SPREAD = 1.5;
+
+/**
+ * How far behind the frame the halo sits.
+ *
+ * Behind, not in front: the frame is opaque and writes depth, so it occludes
+ * the middle of the halo and only the bleed around its edges survives. That is
+ * what makes it read as light escaping from behind a solid object rather than
+ * a bright rectangle pasted over it.
+ */
+export const SIGN_GLOW_STANDOFF = 0.3;
+
+/** Everything a caller must dispose when it tears the sign down. */
+export interface SignGlow {
+  readonly mesh: Mesh;
+  readonly geometry: PlaneGeometry;
+  readonly material: MeshBasicMaterial;
+  readonly texture: CanvasTexture;
+}
+
+/**
+ * The frame's material: dark blue, lit from within.
+ *
+ * Shared by both signs so the pair cannot drift apart - the same reason
+ * `drawSign` exists. The emissive term is what keeps the frame bright at
+ * night-ish angles where a Lambert surface would otherwise go flat, and it is
+ * the same colour as the halo so the two read as one light source.
+ */
+export const createSignFrameMaterial = (): MeshLambertMaterial =>
+  new MeshLambertMaterial({
+    color: SIGN_FRAME_COLOR,
+    emissive: new Color(SIGN_GLOW_COLOR),
+    emissiveIntensity: 0.55,
+  });
+
+/**
+ * A neon halo sized to a sign frame.
+ *
+ * Deliberately NOT post-processing: a bloom pass would light the whole scene
+ * and cost a full-screen render target on exactly the mobile hardware least
+ * able to afford it. This is one additive plane per sign - two draws in total
+ * - and it needs no light, so it is bright regardless of where the sun is.
+ *
+ * The mesh faces +Z, like `PlaneGeometry` itself. The caller positions and
+ * rotates it to match its own panel, which is the only thing that differs
+ * between the two signs.
+ *
+ * @param frameWidth  the frame mesh's width in world units
+ * @param frameHeight the frame mesh's height in world units
+ */
+export const createSignGlow = (frameWidth: number, frameHeight: number): SignGlow => {
+  const planeWidth = frameWidth + GLOW_SPREAD * 2;
+  const planeHeight = frameHeight + GLOW_SPREAD * 2;
+
+  const texture = createGlowTexture({
+    color: SIGN_GLOW_COLOR,
+    planeWidth,
+    planeHeight,
+    spread: GLOW_SPREAD,
+  });
+
+  const geometry = new PlaneGeometry(planeWidth, planeHeight);
+  const material = new MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    // Additive, so the halo BRIGHTENS whatever is behind it instead of
+    // painting a washed-out rectangle over the wall.
+    blending: AdditiveBlending,
+    // Never occludes anything: it is light, not a surface.
+    depthWrite: false,
+    side: DoubleSide,
+    fog: false,
+  });
+
+  const mesh = new Mesh(geometry, material);
+  // Drawn before ordinary transparent geometry, so the sign panel in front of
+  // it composites on top rather than fighting it.
+  mesh.renderOrder = -1;
+
+  return { mesh, geometry, material, texture };
+};
 
 /**
  * Size of supplied ICON ART, as a multiple of the label's font size.
