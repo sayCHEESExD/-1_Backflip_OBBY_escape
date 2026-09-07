@@ -16,7 +16,13 @@ import { RendererManager } from '../rendering/RendererManager.js';
 import { SceneManager } from '../rendering/SceneManager.js';
 import { DebugOverlay } from '../ui/DebugOverlay.js';
 import { ProgressHud } from '../ui/ProgressHud.js';
-import { AURA_TIERS, TRAIL_TIERS } from '@obby/shared';
+import {
+  AURA_TIERS,
+  SPAWN_POSITION,
+  SPAWN_ROTATION_Y,
+  TRAIL_TIERS,
+  type RespawnMessage,
+} from '@obby/shared';
 import { AudioControls } from '../ui/AudioControls.js';
 import { CosmeticShop } from '../ui/CosmeticShop.js';
 import { iconMarkup } from '../config/uiIcons.js';
@@ -63,6 +69,8 @@ export class Game {
   private readonly shop: ShopController;
 
   private localPlayer: LocalPlayer | null = null;
+  /** Authoritative respawn waiting for the death transition to finish. */
+  private pendingRespawn: RespawnMessage | null = null;
   private localSessionId: string | null = null;
   private modelReport: PlayerModelReport | null = null;
 
@@ -151,10 +159,14 @@ export class Game {
       onPlayerChanged: (sessionId, player) => this.onPlayerChanged(sessionId, player),
       onPlayerRemoved: (sessionId) => this.remotePlayers.remove(sessionId),
       onRespawn: (message) => {
-        // The server's authoritative respawn. The client usually predicted it
-        // already, so applying it again is intentionally idempotent.
-        if (this.localPlayer) this.run.respawn(this.localPlayer, message.reason);
-        this.snapCameraIfPlaced();
+        // The server's authoritative respawn. Held rather than applied at
+        // once: the client is usually mid-transition, and the whole point of
+        // the transition is that nothing moves the character until it ends.
+        // `acknowledgeRespawn` lifts the reconciliation barrier here, because
+        // every patch the server sends AFTER this message is post-respawn.
+        this.pendingRespawn = message;
+        this.localPlayer?.acknowledgeRespawn();
+        this.applyPendingRespawn();
       },
     });
 
@@ -220,6 +232,9 @@ export class Game {
       // Triggers are sampled after the player has moved, so a trophy pad or a
       // redline is detected at the position actually reached this frame.
       this.run.update(delta, player);
+      // The death transition has run its course; place the player, preferring
+      // the server's own transform when it has already arrived.
+      if (player.deathComplete) this.applyPendingRespawn();
       this.shop.update(delta, player);
 
       this.snapCameraIfPlaced();
@@ -322,6 +337,32 @@ export class Game {
    * Safe to call at any time - it does nothing unless a placement is pending,
    * and reading the flag clears it, so one placement snaps exactly once.
    */
+  /**
+   * Place the player at spawn once the death transition allows it.
+   *
+   * Does nothing while the transition is still playing, so an authoritative
+   * respawn that arrives early waits its turn rather than cutting the effect
+   * short. Falls back to the shared spawn constants when the server has not
+   * answered yet - the client predicted the respawn, and the server's own
+   * message will simply confirm the same place.
+   */
+  private applyPendingRespawn(): void {
+    const player = this.localPlayer;
+    if (!player) return;
+    if (player.isDying && !player.deathComplete) return;
+    if (!player.isDying && !this.pendingRespawn) return;
+
+    const at = this.pendingRespawn;
+    player.teleport(
+      at?.x ?? SPAWN_POSITION.x,
+      at?.y ?? SPAWN_POSITION.y,
+      at?.z ?? SPAWN_POSITION.z,
+      at?.rotationY ?? SPAWN_ROTATION_Y,
+    );
+    this.pendingRespawn = null;
+    this.snapCameraIfPlaced();
+  }
+
   private snapCameraIfPlaced(): void {
     const player = this.localPlayer;
     if (!player) return;

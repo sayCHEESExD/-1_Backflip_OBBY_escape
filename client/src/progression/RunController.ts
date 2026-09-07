@@ -1,4 +1,4 @@
-import { SPAWN_POSITION, SPAWN_ROTATION_Y, type RespawnReason } from '@obby/shared';
+import type { RespawnReason } from '@obby/shared';
 import type { LocalPlayer } from '../player/LocalPlayer.js';
 import { logger } from '../util/logger.js';
 import type { GorgeCollision } from '../world/GorgeCollision.js';
@@ -24,9 +24,14 @@ export interface RunNetwork {
  * Drives one run: watches the world triggers under the local player and turns
  * them into server requests plus an immediate local respawn.
  *
- * Authority split: the client detects and PREDICTS the respawn so it feels
+ * Authority split: the client detects and PREDICTS the death so it feels
  * instant, but never awards anything. Wins come back from the server, which
- * validates the claim and re-issues its own authoritative respawn.
+ * validates the claim and issues its own authoritative respawn.
+ *
+ * Detecting a death and PLACING the player are deliberately separate. This
+ * only starts the transition; `Game` performs the placement once it ends,
+ * preferring the server's transform if it has arrived by then. Splitting them
+ * is what leaves a window in which no stale state can be applied.
  */
 export class RunController {
   private readonly collision: GorgeCollision;
@@ -57,13 +62,13 @@ export class RunController {
 
     // Order matters: a hazard or a fall ends the run before any reward.
     if (triggers.fell) {
-      this.respawn(player, 'fell');
+      this.die(player, 'fell');
       return;
     }
 
     if (triggers.redline) {
       this.network.reportHazard();
-      this.respawn(player, 'redline');
+      this.die(player, 'redline');
       return;
     }
 
@@ -71,23 +76,27 @@ export class RunController {
       // Claim once per run; the server decides whether it is actually awarded.
       this.claimed.add(triggers.trophyIndex);
       this.network.claimTrophy(triggers.trophyIndex);
-      this.respawn(player, 'trophy');
+      this.die(player, 'trophy');
     }
   }
 
   /**
-   * Apply a respawn. Used both for local prediction and for the server's
-   * authoritative Respawn message, so a duplicate is harmless.
+   * Begin a death. ONE path for all three endings.
+   *
+   * Banking a trophy is logically a reward rather than a death, but visually
+   * it is the same beat - the run ends and the player is placed back at spawn
+   * - so it reuses the same transition instead of growing a second one.
+   *
+   * The teleport is deliberately NOT done here. The player enters a local
+   * death state immediately, which is what stops the old position being
+   * rendered or advanced, and `Game` places them when the transition is done.
    */
-  respawn(player: LocalPlayer, reason: RespawnReason): void {
-    player.teleport(
-      SPAWN_POSITION.x,
-      SPAWN_POSITION.y,
-      SPAWN_POSITION.z,
-      SPAWN_ROTATION_Y,
-    );
+  die(player: LocalPlayer, reason: RespawnReason): void {
+    if (player.isDying) return;
+    player.beginDeath();
     this.claimed.clear();
     this.graceTimer = RESPAWN_GRACE;
-    logger.info(SCOPE, `respawn: ${reason}`);
+    logger.info(SCOPE, `death: ${reason}`);
   }
+
 }

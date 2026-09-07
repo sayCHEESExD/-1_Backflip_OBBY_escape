@@ -13,9 +13,18 @@ const MAX_PITCH = 1.15;
  * movement input by the yaw, so looking around never moves the character and
  * moving never turns the camera.
  *
- * Pointer lock is requested by clicking the canvas, which is the only gesture
- * a browser accepts. While a UI panel is up the source is suppressed and the
- * lock is released, so the cursor is available for the shop buttons.
+ * Pointer lock is a TOGGLE on the canvas, and the canvas alone:
+ *
+ *   click the game  -> cursor hidden, mouse steers the camera
+ *   click again, or press Escape -> cursor back, mouse steers nothing
+ *   click the game  -> hidden again
+ *
+ * Nothing re-locks on its own. That is the point: the cursor is the only way
+ * to use the shops, so taking it back without being asked - on a keypress, on
+ * a panel closing, on the tab regaining focus - fights the player the moment
+ * they want to click something. The UI panels are DOM above the canvas, so a
+ * click on a button or a backdrop never reaches this listener and can never
+ * re-lock by accident.
  *
  * Touch look goes through the SAME accumulator via `addLookDelta`, so the
  * pitch limits, the yaw wrap and the suppression rule exist once and cannot
@@ -29,6 +38,18 @@ export class MouseLook {
   private suppressed = false;
   /** True while the left button is down and the pointer is NOT locked. */
   private dragging = false;
+
+  /**
+   * Whether this browser has ever actually granted the lock.
+   *
+   * Only used to decide whether drag-to-look is needed. Where pointer lock
+   * works, holding the button must NOT steer - the cursor is free for the UI
+   * and dragging on the world would be a second, invisible camera control.
+   * Where it is refused - a sandboxed frame, an embedded preview - dragging
+   * stays as the fallback, because otherwise there is no way to look around
+   * at all.
+   */
+  private lockEverGranted = false;
 
   get yaw(): number {
     return this.yawValue;
@@ -49,6 +70,7 @@ export class MouseLook {
     window.addEventListener('mouseup', this.onMouseUp);
     window.addEventListener('mousemove', this.onMouseMove);
     window.addEventListener('blur', this.onBlur);
+    document.addEventListener('pointerlockchange', this.onLockChange);
   }
 
   detach(): void {
@@ -56,14 +78,18 @@ export class MouseLook {
     window.removeEventListener('mouseup', this.onMouseUp);
     window.removeEventListener('mousemove', this.onMouseMove);
     window.removeEventListener('blur', this.onBlur);
+    document.removeEventListener('pointerlockchange', this.onLockChange);
     this.canvas = null;
   }
 
   /**
    * Stop looking while a panel owns the screen, and hand the cursor back.
    *
-   * Releasing the lock is what makes the shop buttons clickable; re-locking is
-   * left to the player's next click on the canvas rather than done silently.
+   * Releasing the lock is what makes the shop buttons clickable. Closing the
+   * panel deliberately does NOT take it back: the player may well want to open
+   * another shop, and re-grabbing the cursor the instant a panel closes is the
+   * behaviour that makes a menu feel like it is fighting you. One click on the
+   * world resumes play.
    */
   setSuppressed(suppressed: boolean): void {
     this.suppressed = suppressed;
@@ -72,19 +98,59 @@ export class MouseLook {
     if (this.locked) document.exitPointerLock();
   }
 
+  /**
+   * Toggle the lock. This is the ONLY thing that ever acquires it.
+   *
+   * Bound to the canvas, so it hears clicks on the game world and nothing
+   * else: every panel, button and backdrop is DOM above the canvas and stops
+   * the event before it arrives. That is what keeps a click on a shop from
+   * grabbing the cursor the player is using to click it.
+   */
   private readonly onMouseDown = (event: MouseEvent): void => {
     if (this.suppressed || event.button !== 0) return;
-    if (this.locked) return;
-    // Dragging works immediately; the lock request may be refused (or delayed
-    // by the browser's own cooldown), and look must not break when it is.
-    this.dragging = true;
-    // The request rejects on its own promise in sandboxed frames and during
-    // the browser's own lock cooldown. Neither is a fault - drag-to-look is
-    // already active - so it is caught rather than left to surface as an
-    // unhandled rejection.
-    const request = this.canvas?.requestPointerLock?.() as unknown;
-    if (request instanceof Promise) request.catch(() => undefined);
+
+    if (this.locked) {
+      // Second click: hand the cursor back for the UI.
+      document.exitPointerLock();
+      return;
+    }
+
+    // Only where the lock is refused outright does holding the button steer;
+    // see `lockEverGranted`.
+    this.dragging = !this.lockEverGranted;
+    this.requestLock();
   };
+
+  /**
+   * The lock was gained or lost.
+   *
+   * Nothing is re-acquired here. Escape, a tab switch and the browser's own
+   * release all land in the same place - cursor visible, camera still - and
+   * the player takes control back by clicking the world.
+   */
+  private readonly onLockChange = (): void => {
+    if (this.locked) {
+      this.lockEverGranted = true;
+      // A granted lock supersedes drag-to-look; the two must never both steer.
+      this.dragging = false;
+      return;
+    }
+    this.dragging = false;
+  };
+
+  /**
+   * Ask for the lock, tolerating every way a browser can say no.
+   *
+   * The request rejects on its own promise in sandboxed frames and during the
+   * browser's own post-Escape cooldown. Neither is a fault - drag-to-look
+   * still works - so it is caught rather than left to surface as an unhandled
+   * rejection.
+   */
+  private requestLock(): void {
+    if (!this.canvas || this.locked || this.suppressed) return;
+    const request = this.canvas.requestPointerLock?.() as unknown;
+    if (request instanceof Promise) request.catch(() => undefined);
+  }
 
   private readonly onMouseUp = (): void => {
     this.dragging = false;

@@ -92,6 +92,18 @@ export class PlayerCharacter {
     this.root.rotation.y = yaw;
   }
 
+  /**
+   * Scale the character for a presentation effect - the death squash.
+   *
+   * Written to the VISUAL node, never to `root`: root is the physics
+   * transform gameplay owns, and the same rule that stops the animator moving
+   * the player stops this too. The animator writes this node's position (the
+   * bob) and never its scale, so the two cannot fight.
+   */
+  setVisualScale(x: number, y: number, z: number): void {
+    this.visual.scale.set(x, y, z);
+  }
+
   /** Advance the animation. Never changes `root`. */
   update(delta: number, input: AnimationInput): void {
     this.animator.update(delta, input);
@@ -104,6 +116,7 @@ export class PlayerCharacter {
   /** Clear animation state, e.g. after a server-issued respawn. */
   resetAnimation(): void {
     this.animator.reset();
+    this.visual.scale.set(1, 1, 1);
     // The ribbon describes a run that no longer exists; keeping it would draw
     // a line from the old position to the spawn point.
     this.trail.clear();

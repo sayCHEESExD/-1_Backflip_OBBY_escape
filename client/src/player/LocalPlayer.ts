@@ -38,6 +38,27 @@ const FIXED_DT = 1 / 60;
 const MAX_STEPS_PER_FRAME = 5;
 
 /**
+ * Seconds the death squash plays before the player is placed at spawn.
+ *
+ * Short on purpose: it exists to give the death a beat of its own, not to be
+ * a cutscene. The simulation is frozen for exactly this long.
+ */
+const DEATH_DURATION = 0.22;
+
+/** Seconds the character pops back up to full size after arriving at spawn. */
+const ARRIVE_DURATION = 0.13;
+
+/**
+ * Longest the client will ignore authoritative state after predicting a death.
+ *
+ * A FAILSAFE, not the mechanism - the barrier is normally lifted by the
+ * server's own Respawn message. It exists for the one case that never gets
+ * one: a trophy claim the server REJECTS, where the client mispredicted a
+ * respawn that is never going to happen and has to be corrected back.
+ */
+const RESPAWN_ACK_TIMEOUT = 1.5;
+
+/**
  * Position error above which prediction snaps instead of easing.
  *
  * Small corrections are blended into the render position so ordinary
@@ -164,6 +185,32 @@ export class LocalPlayer {
    * in the frame's normal order.
    */
   private placement: PlacementKind = 'none';
+
+  /**
+   * Seconds into the death squash, or -1 when not dying.
+   *
+   * While this runs the simulation does not step and NO input is emitted, so
+   * the player cannot drift, fall further, or be moved by anything the player
+   * presses. It is the local death transition state the whole fix hangs on.
+   */
+  private deathTime = -1;
+
+  /** Seconds into the arrival pop, or -1 when not arriving. */
+  private arriveTime = -1;
+
+  /**
+   * True from predicting a death until the server acknowledges it.
+   *
+   * THE fix for the hosted stale-state replay. Between those two moments every
+   * state patch still in flight describes the player as they were an instant
+   * BEFORE they died - alive, at the redline or on the pad - and applying one
+   * teleports them back there for a frame. Locally that window is under a
+   * frame and invisible; over a real connection it is a whole round trip.
+   */
+  private awaitingRespawn = false;
+
+  /** Seconds the barrier has been up, against RESPAWN_ACK_TIMEOUT. */
+  private respawnWait = 0;
 
   private readonly animationInput: AnimationInput = createAnimationInput();
 
@@ -310,12 +357,66 @@ export class LocalPlayer {
     this.previous.y = y;
     this.previous.z = z;
     this.pending.length = 0;
+    // Anything still queued for the network describes the run that just
+    // ended. Sending it would advance the server from a position the player
+    // has already left.
+    this.outgoing.length = 0;
     this.accumulator = 0;
     this.correction.set(0, 0, 0);
     this.placement = 'respawn';
+    // The squash is over; the character pops back to full size on arrival.
+    this.deathTime = -1;
+    this.arriveTime = 0;
     this.character.resetAnimation();
+    this.character.setVisualScale(0.1, 0.1, 0.1);
     this.syncFromMotion();
     this.syncCharacter();
+  }
+
+  /**
+   * Enter the local death transition.
+   *
+   * Everything describing the run just ended is dropped HERE, at the moment of
+   * death, rather than when the server gets round to confirming it: the
+   * unacknowledged inputs, the queued outgoing ones, the reconciliation offset
+   * and the velocity. The simulation then stops stepping until the player is
+   * placed, so no later frame can advance the old state.
+   */
+  beginDeath(): void {
+    if (this.deathTime >= 0) return;
+    this.deathTime = 0;
+    this.arriveTime = -1;
+    this.awaitingRespawn = true;
+    this.respawnWait = 0;
+    this.pending.length = 0;
+    this.outgoing.length = 0;
+    this.correction.set(0, 0, 0);
+    this.accumulator = 0;
+    this.motion.vx = 0;
+    this.motion.vy = 0;
+    this.motion.vz = 0;
+  }
+
+  /** True while the death squash is playing. */
+  get isDying(): boolean {
+    return this.deathTime >= 0;
+  }
+
+  /** True once the squash has run its course and the player may be placed. */
+  get deathComplete(): boolean {
+    return this.deathTime >= DEATH_DURATION;
+  }
+
+  /**
+   * The server has confirmed the respawn; stale patches can no longer arrive.
+   *
+   * Called from the Respawn message handler, which is ordered on the same
+   * socket as the state patches - so everything the server sends after it is
+   * post-respawn by construction.
+   */
+  acknowledgeRespawn(): void {
+    this.awaitingRespawn = false;
+    this.respawnWait = 0;
   }
 
   /**
@@ -326,6 +427,11 @@ export class LocalPlayer {
    * player expects to be.
    */
   reconcile(state: AuthoritativeMotion): void {
+    // The barrier. Until the server confirms the respawn, its state still
+    // describes the player alive at the place they died - applying it is
+    // exactly the stale replay this guards against.
+    if (this.awaitingRespawn) return;
+
     const predictedX = this.motion.x;
     const predictedY = this.motion.y;
     const predictedZ = this.motion.z;
@@ -420,6 +526,23 @@ export class LocalPlayer {
    * @param cameraYaw yaw the camera faces, so movement is camera-relative
    */
   update(delta: number, input: Readonly<InputState>, cameraYaw: number): void {
+    this.tickRespawnBarrier(delta);
+
+    // Frozen. No step, no input emitted, no gravity - the old state cannot
+    // advance, and nothing the player presses can move a dead character.
+    if (this.deathTime >= 0) {
+      this.deathTime += delta;
+      this.applyDeathScale();
+      // The LOCAL simulation is frozen, but the server's must not be. It
+      // advances only by the inputs it receives, and a FALL is confirmed by
+      // the server watching its own player cross the death plane - so going
+      // silent here means a fall that is never acknowledged and a barrier that
+      // only the failsafe ever lifts. Neutral input: no stick, no jump.
+      this.emitIdleInputs(delta);
+      this.character.update(delta, this.animationInput);
+      return;
+    }
+
     this.accumulator += Math.max(0, delta);
 
     let steps = 0;
@@ -477,6 +600,7 @@ export class LocalPlayer {
     this.events.landed = landed;
     this.events.backflipRequested = backflipRequested;
 
+    this.advanceArrival(delta);
     this.decayCorrection(delta);
     this.syncFromMotion();
     this.syncCharacter();
@@ -507,6 +631,81 @@ export class LocalPlayer {
   /** Copy the predicted motion out, for tests and diagnostics. */
   readMotion(into: PlayerMotion): void {
     copyMotion(this.motion, into);
+  }
+
+  /**
+   * Squash, then vanish.
+   *
+   * Written to the character's VISUAL node, never to the physics root, so this
+   * is presentation only - the same rule the animator follows. Two beats: a
+   * quick squash that reads as an impact, then a shrink out.
+   */
+  private applyDeathScale(): void {
+    const t = Math.min(this.deathTime / DEATH_DURATION, 1);
+    if (t < 0.45) {
+      const k = t / 0.45;
+      this.character.setVisualScale(1 + 0.3 * k, 1 - 0.55 * k, 1 + 0.3 * k);
+      return;
+    }
+    const k = (t - 0.45) / 0.55;
+    const shrink = Math.max(0, 1 - k);
+    this.character.setVisualScale(1.3 * shrink, 0.45 * shrink, 1.3 * shrink);
+  }
+
+  /** Pop back to full size after being placed. Mirrors the death squash. */
+  private advanceArrival(delta: number): void {
+    if (this.arriveTime < 0) return;
+    this.arriveTime += delta;
+    const t = Math.min(this.arriveTime / ARRIVE_DURATION, 1);
+    if (t >= 1) {
+      this.arriveTime = -1;
+      this.character.setVisualScale(1, 1, 1);
+      return;
+    }
+    // Ease out with a touch of overshoot, so arriving reads as landing rather
+    // than fading in.
+    const scale = 0.1 + 0.9 * t * (2 - t) + 0.08 * Math.sin(t * Math.PI);
+    this.character.setVisualScale(scale, scale, scale);
+  }
+
+  /**
+   * Emit input without simulating it.
+   *
+   * Used only while dead. The sequence keeps advancing and the server keeps
+   * stepping, but nothing touches this client's own motion or its pending
+   * list - so there is no local state to replay and nothing to reconcile
+   * against until the respawn lands.
+   */
+  private emitIdleInputs(delta: number): void {
+    this.accumulator += Math.max(0, delta);
+    let steps = 0;
+    while (this.accumulator >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
+      this.accumulator -= FIXED_DT;
+      steps += 1;
+      this.outgoing.push({
+        seq: this.nextSeq,
+        dt: FIXED_DT,
+        moveX: 0,
+        moveZ: 0,
+        jump: false,
+        sprint: false,
+        cameraYaw: this.motion.yaw,
+      });
+      this.nextSeq += 1;
+    }
+    if (this.accumulator > FIXED_DT * MAX_STEPS_PER_FRAME) this.accumulator = 0;
+  }
+
+  /** Lift the barrier if the server never acknowledged the death. */
+  private tickRespawnBarrier(delta: number): void {
+    if (!this.awaitingRespawn) return;
+    this.respawnWait += delta;
+    if (this.respawnWait < RESPAWN_ACK_TIMEOUT) return;
+    // No Respawn message came. The most likely reason is a request the server
+    // refused, so the prediction was wrong and reconciliation must be allowed
+    // to correct it.
+    this.awaitingRespawn = false;
+    this.respawnWait = 0;
   }
 
   /** Ease the render-space correction offset back to zero. */
