@@ -47,6 +47,21 @@
         user-select: none;
         -webkit-tap-highlight-color: transparent;
       }
+      /*
+       * The cursor exists for menus and shops, and nowhere else.
+       *
+       * Pointer lock hides it while it holds, but the browser hands it back on
+       * every Escape and will not grant it again until the player's next
+       * gesture - so between those two moments a pointer would sit over the
+       * HUD with nothing to click. This class covers that window.
+       *
+       * The descendant selector is deliberate: the rail buttons declare a
+       * `cursor: pointer` of their own, which would otherwise show through.
+       */
+      body.obby-cursor-hidden,
+      body.obby-cursor-hidden * {
+        cursor: none !important;
+      }
       #app {
         position: fixed;
         inset: 0;

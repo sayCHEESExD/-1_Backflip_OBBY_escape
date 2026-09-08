@@ -18,13 +18,18 @@ const MAX_PITCH = 1.15;
  *   gameplay        -> cursor hidden, mouse steers the camera
  *   a panel opens   -> lock released, cursor free for its buttons
  *   the panel closes-> lock retaken, camera resumes at once
- *   Escape, panel up-> the panel closes and the lock comes straight back
- *   Escape, playing -> the browser releases; a click on the world resumes
+ *   Escape          -> the browser releases; the lock is taken straight back
  *
- * The two Escapes are deliberately different, and telling them apart is the
- * whole job: one is "put me back in the game", the other is "let me out". The
- * only thing that separates them is whether a panel was up, which is exactly
- * what `suppressed` already records.
+ * A PANEL IS THE ONLY THING THAT SHOWS A CURSOR. Escape does not, and neither
+ * does anything else: the browser forces the lock open on Escape and no page
+ * can prevent that, so the release is treated as accidental and reversed. Two
+ * things do the reversing, because neither is enough on its own - the lock is
+ * re-requested, which browsers refuse for a moment after an Escape, and the
+ * cursor is hidden in CSS meanwhile, which covers the gap until the player's
+ * next keystroke or click makes the request stick.
+ *
+ * The player is never trapped: Escape still works at the browser's level every
+ * time, and the shop and rebirth keys give a real cursor on demand.
  *
  * The lock is taken on the player's FIRST gesture rather than waiting for a
  * deliberate click on the world. A browser will not grant it without one, so
@@ -73,17 +78,16 @@ export class MouseLook {
   /**
    * A re-lock that is owed but has not been granted.
    *
-   * Closing a panel with Escape asks for the lock back, but a browser will not
-   * grant it from that keystroke: the HTML spec excludes Esc from the input
-   * events that count as user activation, precisely so a page cannot re-trap a
-   * cursor the user just escaped. The request is still made - some browsers
-   * and embeddings honour it - and when it is refused the debt is remembered
-   * and paid off on the player's very next real gesture, which is the W press
-   * or click they were about to make anyway.
+   * A browser will not grant a lock from an Escape keystroke: the HTML spec
+   * excludes Esc from the input events that count as user activation,
+   * precisely so a page cannot instantly re-trap a cursor the user escaped.
+   * The request is still made - some browsers and embeddings honour it - and
+   * when it is refused the debt is remembered and paid off on the player's
+   * very next real gesture, which is the W press or click they were about to
+   * make anyway.
    *
-   * Set ONLY by a panel closing. An Escape during gameplay must never set it,
-   * or the first movement key would drag the player back into a lock they just
-   * asked to leave.
+   * Set whenever the lock is lost with no panel up, which is the definition of
+   * a release nobody asked for.
    */
   private pendingLock = false;
 
@@ -117,6 +121,7 @@ export class MouseLook {
     window.removeEventListener('blur', this.onBlur);
     window.removeEventListener('keydown', this.onFirstGesture);
     document.removeEventListener('pointerlockchange', this.onLockChange);
+    document.body.classList.remove('obby-cursor-hidden');
     this.canvas = null;
   }
 
@@ -136,6 +141,7 @@ export class MouseLook {
     if (suppressed) {
       this.dragging = false;
       this.pendingLock = false;
+      this.applyCursor();
       if (this.locked) document.exitPointerLock();
       return;
     }
@@ -148,6 +154,7 @@ export class MouseLook {
       this.pendingLock = true;
       this.requestLock();
     }
+    this.applyCursor();
   }
 
   /**
@@ -161,13 +168,23 @@ export class MouseLook {
   engage(): void {
     this.armed = true;
     if (!this.suppressed) this.requestLock();
+    this.applyCursor();
   }
 
-  /** Release the lock and stop looking, without suppressing the source. */
+  /**
+   * Hand the lock and the cursor back to whatever is embedding the game.
+   *
+   * Disarms as well as releasing, which is what separates this from a panel
+   * opening: a suppressed source is still playing and takes the lock back the
+   * moment the panel closes, whereas a released one has stopped, shows a
+   * cursor and waits to be engaged again.
+   */
   release(): void {
     this.dragging = false;
     this.pendingLock = false;
+    this.armed = false;
     if (this.locked) document.exitPointerLock();
+    this.applyCursor();
   }
 
   /**
@@ -187,17 +204,10 @@ export class MouseLook {
    * puts them back in.
    */
   private readonly onFirstGesture = (event: KeyboardEvent): void => {
-    if (event.key === 'Escape') {
-      // Two very different Escapes arrive here, and `ModalLayer` has already
-      // told them apart: it consumes the one that closed a panel by preventing
-      // the default, and leaves the gameplay one alone for the browser. A
-      // consumed Escape means "put me back in the game", so the re-lock it
-      // just asked for stands. An unconsumed one means "let me out", and any
-      // re-lock still owed is written off so no movement key can quietly take
-      // the cursor back.
-      if (!event.defaultPrevented) this.pendingLock = false;
-      return;
-    }
+    // Escape can never carry the activation a lock needs, so it is not the
+    // keystroke that restores one - it only ever loses it. The debt it leaves
+    // behind is settled by the next key that does count.
+    if (event.key === 'Escape') return;
     if (!this.armed) {
       this.engage();
       return;
@@ -232,10 +242,36 @@ export class MouseLook {
       this.pendingLock = false;
       // A granted lock supersedes drag-to-look; the two must never both steer.
       this.dragging = false;
+      this.applyCursor();
       return;
     }
+
     this.dragging = false;
+    // Lost the lock with no panel up. Nothing in the game asks for that, so it
+    // came from Escape, an alt-tab or the browser itself - all of which are
+    // reversed rather than accepted, because a cursor over the HUD is not a
+    // state this game has. The immediate retry usually fails during the
+    // browser's post-Escape cooldown; `pendingLock` is what actually gets it
+    // back, on the next keystroke or click.
+    if (!this.suppressed && this.armed) {
+      this.pendingLock = true;
+      this.requestLock();
+    }
+    this.applyCursor();
   };
+
+  /**
+   * Show a cursor only while a panel owns the screen.
+   *
+   * Guarded on `lockEverGranted` so it can never hide a cursor the player
+   * still needs: where pointer lock is refused outright - a sandboxed frame,
+   * an embedded preview - the rail buttons are the only way into the shops and
+   * they have to stay clickable.
+   */
+  private applyCursor(): void {
+    const hide = this.armed && this.lockEverGranted && !this.suppressed;
+    document.body.classList.toggle('obby-cursor-hidden', hide);
+  }
 
   /**
    * Ask for the lock, tolerating every way a browser can say no.
