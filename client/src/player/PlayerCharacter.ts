@@ -19,7 +19,8 @@ import { playerModelLoader } from './PlayerModelLoader.js';
  *     flipPivot  raised to hip height, carries the backflip rotation so the
  *                character spins around its own centre of mass in place.
  *       visual   carries the vertical bob.
- *         model  the cloned FBX (scaled), whose bones the rig poses.
+ *         avatarRoot  body proportions from the player's Bloxity avatar.
+ *           model  the cloned FBX (scaled), whose bones the rig poses.
  */
 export class PlayerCharacter {
   /** Attach this to the scene. Its transform is the player transform. */
@@ -41,6 +42,17 @@ export class PlayerCharacter {
   /** Ribbon left behind. Lives in `worldRoot`, not on the character. */
   readonly trail = new TrailEffect();
 
+  /**
+   * Whole-body scale from the player's Bloxity avatar proportions.
+   *
+   * Its own node rather than a write to `visual` or `model`: `visual.scale` is
+   * the death squash and the model clone's own scale is the FBX unit
+   * conversion, so proportions written to either would be undone by an effect
+   * or would undo the conversion. One owner per node is what keeps all three
+   * independent.
+   */
+  readonly avatarRoot = new Group();
+
   private readonly flipPivot = new Group();
   private readonly visual = new Group();
   private readonly model: Object3D;
@@ -54,7 +66,8 @@ export class PlayerCharacter {
 
     this.root.add(this.flipPivot);
     this.flipPivot.add(this.visual);
-    this.visual.add(this.model);
+    this.visual.add(this.avatarRoot);
+    this.avatarRoot.add(this.model);
 
     // Bind against the model's own space so the rig is independent of where
     // the character stands or which way it faces.
@@ -65,6 +78,17 @@ export class PlayerCharacter {
 
     this.root.add(this.aura.root);
     this.worldRoot.add(this.trail.root);
+  }
+
+  /**
+   * The cloned FBX itself.
+   *
+   * Exposed for the avatar layer, which re-skins its materials and hangs
+   * accessories off its bones. Nothing else should need it - position, facing
+   * and animation all have their own accessors above.
+   */
+  get modelRoot(): Object3D {
+    return this.model;
   }
 
   /** Show the cosmetics the server says this player has equipped. */

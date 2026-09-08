@@ -9,6 +9,7 @@ export * from './constants/world.js';
 export * from './config/backflip.js';
 export * from './config/auras.js';
 export * from './config/boots.js';
+export * from './config/bux.js';
 export * from './config/leaderboard.js';
 export * from './config/movement.js';
 export * from './config/camera.js';

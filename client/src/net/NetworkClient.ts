@@ -42,6 +42,15 @@ const sleep = (ms: number): Promise<void> =>
  * Falls back to a throwaway id when storage is unavailable (private windows,
  * blocked site data) - the session still works, it just will not be restored.
  */
+/**
+ * This browser's stable id for the game's own profile.
+ *
+ * Exported because the Bloxity layer has to name the same profile when it
+ * sends purchase metadata: the webhook credits Wins to a profile, and a second
+ * copy of this key elsewhere would be one rename away from crediting nobody.
+ */
+export const getPlayerId = (): string => resolvePlayerId();
+
 const resolvePlayerId = (): string => {
   const fresh = `p_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
   try {
@@ -85,6 +94,8 @@ export class NetworkClient {
   private room: Room<NetGorgeState> | null = null;
   private status: ConnectionStatus = 'idle';
   private lastSendAt = 0;
+  /** Bloxity display name sent with the join. Empty until one is known. */
+  private displayName = '';
   /** So a server too old to send boards is reported once, not every frame. */
   private missingBoardsLogged = false;
 
@@ -93,8 +104,34 @@ export class NetworkClient {
     this.handlers = handlers;
   }
 
+  /**
+   * The name to introduce this player to the room by.
+   *
+   * Set before `connect`. Cosmetic: it is replicated so other clients can
+   * raise a "your friend joined" toast, and the server treats it as the
+   * display string it is.
+   */
+  setDisplayName(name: string): void {
+    this.displayName = name.slice(0, 32);
+  }
+
+  /**
+   * Ask the server to put the player back at spawn.
+   *
+   * A request. The server replies with the authoritative `Respawn`, exactly as
+   * it does for a fall or a redline - this cannot place a player anywhere.
+   */
+  requestRespawn(): void {
+    this.room?.send(MessageType.RequestRespawn, {});
+  }
+
   get sessionId(): string | null {
     return this.room?.sessionId ?? null;
+  }
+
+  /** The joined room's id, for the portal's invite links. Null until joined. */
+  get roomId(): string | null {
+    return this.room?.roomId ?? null;
   }
 
   get connectionStatus(): ConnectionStatus {
@@ -148,6 +185,7 @@ export class NetworkClient {
       try {
         this.room = await this.client.joinOrCreate<NetGorgeState>(ROOM_NAME, {
           playerId,
+          legionName: this.displayName,
         });
         break;
       } catch (error) {

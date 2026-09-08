@@ -280,7 +280,14 @@ Procedural, bone-driven, and required for the finished game — not a placeholde
 - **Wins are spent in exactly one place**: `Wallet.spend`. Boots, trails and
   auras are three shops but must not become three ways to take payment - a
   second deduction path is how a wallet ends up disagreeing with an inventory.
-  Wins are only ever ADDED by `TrophyService`, and only ever removed there.
+  Wins are ADDED in exactly two places, and nowhere else may add them:
+  `TrophyService` for earned rewards, and `BuxFulfilmentService` for a paid
+  Bloxity purchase. The second exists because real money is a real source of
+  currency, and it is a whole service rather than a few lines in an HTTP
+  handler for the same reason `Wallet.spend` is a service - so the catalog
+  lookup, the duplicate check and the uint32 overflow guard all live together
+  and cannot be skipped by a new caller. Wins are only ever removed by
+  `Wallet.spend`.
 - Trails and auras share one `CosmeticService`, parameterised by a binding, so
   the buy-and-equip transaction exists once. What each multiplier DOES is never
   decided in that service.
@@ -352,6 +359,53 @@ Procedural, bone-driven, and required for the finished game — not a placeholde
   the client and server must agree on go in `shared/`, never duplicated.
 - `shared/` must not import `three`, `colyseus`, or anything DOM.
 - The client touches `colyseus.js` only inside `client/src/net/`.
+- The client touches `window.Legion` - the Bloxity SDK - only inside
+  `client/src/bloxity/`, and only through the `bloxity` façade in
+  `BloxitySdk.ts`. The SDK is a third-party script from a CDN, so it can be
+  blocked or missing; every method on the façade degrades to a no-op and the
+  game stays fully playable without it. Nothing in the game loop may depend on
+  it being there.
+
+## Bloxity
+
+The game is published on bloxity.io, whose SDK provides identity, avatars,
+friends, portal settings and Bux. It runs identically embedded (an iframe on
+bloxity.io, routed by postMessage) and standalone (our own host, routed to
+api.bloxity.io) - there is one code path, never a branch on environment.
+
+- `client/src/bloxity/` is the whole integration and the only place the SDK is
+  reachable. `BloxityBridge` holds ONE `onUserChanged` subscription as the
+  source of truth for identity; the panel, the avatar, the friends list and the
+  Bux balance all hang off it. The user object is never cached - `getUser()` is
+  read through every time, because a copy is one login away from being wrong.
+- Portal settings are FORWARDED to whichever subsystem already owns the
+  concern - volume to `AudioEngine`, resolution to `RendererManager`,
+  sensitivity to `MouseLook`. The portal never becomes a second owner of
+  anything, and only settings with a real effect are registered, because
+  registering a listener is also what makes a control appear in the portal menu.
+- Avatar application is ADDITIVE and its invariant is that DEFAULTS ARE
+  IDENTITY: every proportion is a multiplier around 1 applied to a rest pose
+  captured once, so a player who never opens the customizer gets exactly the
+  character this game shipped, and applying twice changes nothing. It writes
+  bone POSITION and SCALE only - rotation belongs to `PlayerRig.applyPose`,
+  which rebuilds it from the bind pose every frame.
+- Body-part meshes (`/parts/*.glb`) are deliberately NOT swapped in. This
+  game's body is one skinned FBX mesh bound to twelve bones, so there is no
+  head to hide and no socket to put a replacement in; swapping them would mean
+  replacing the character and its procedural animation, which is a different
+  feature, not a setting. Skin, hat and back ARE applied.
+- **Bux never grants anything client-side.** The client names a SKU and the
+  portal charges for it; the price lives in Bloxity's catalog keyed by game
+  slug. What that SKU is worth in Wins is decided by the shared catalog in
+  `shared/src/config/bux.ts` and credited by the server when Bloxity's
+  server-to-server webhook arrives at `/bloxity/bux-webhook`. A non-2xx reply
+  REFUNDS the player, so only a grant that would be wrong answers with an
+  error - and a duplicate delivery answers 200, because the first one already
+  paid out.
+- A purchase can land while the buyer is offline, so it credits the stored
+  profile; if they are online, `GorgeRoom` mirrors the same credit onto their
+  live state, because the next autosave would otherwise write the old figure
+  back over it. Both halves or neither.
 
 ## Current milestone
 

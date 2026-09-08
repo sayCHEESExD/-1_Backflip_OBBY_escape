@@ -75,6 +75,9 @@ export class MouseLook {
    */
   private armed = false;
 
+  /** Portal sensitivity setting, as a multiple of `SENSITIVITY`. */
+  private sensitivityScale = 1;
+
   /**
    * A re-lock that is owed but has not been granted.
    *
@@ -102,6 +105,18 @@ export class MouseLook {
   /** True while the browser has the pointer captured. */
   get locked(): boolean {
     return !!this.canvas && document.pointerLockElement === this.canvas;
+  }
+
+  /**
+   * Scale mouse sensitivity, 1 being the game's own tuning.
+   *
+   * A MULTIPLIER rather than a replacement, so the portal's slider moves the
+   * feel around the value this game was tuned at instead of redefining it.
+   * Touch look goes through the same accumulator and is deliberately left
+   * alone: a drag is already proportional to the finger's travel.
+   */
+  setSensitivityScale(scale: number): void {
+    this.sensitivityScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
   }
 
   attach(canvas: HTMLElement): void {
@@ -294,7 +309,8 @@ export class MouseLook {
   private readonly onMouseMove = (event: MouseEvent): void => {
     if (this.suppressed) return;
     if (!this.locked && !this.dragging) return;
-    this.addLookDelta(event.movementX * SENSITIVITY, event.movementY * SENSITIVITY);
+    const sensitivity = SENSITIVITY * this.sensitivityScale;
+    this.addLookDelta(event.movementX * sensitivity, event.movementY * sensitivity);
   };
 
   /**

@@ -24,6 +24,7 @@ import { BootService } from '../progression/BootService.js';
 import { CosmeticService } from '../progression/CosmeticService.js';
 import { AURA_BINDING, TRAIL_BINDING } from '../progression/cosmeticBindings.js';
 import { profileStore } from '../progression/ProfileStore.js';
+import { creditWins } from '@obby/shared';
 import { LeaderboardService, type RankedSource } from '../progression/LeaderboardService.js';
 import { ProgressionService } from '../progression/ProgressionService.js';
 import { RebirthService } from '../progression/RebirthService.js';
@@ -98,6 +99,9 @@ export class GorgeRoom extends Room<GorgeState> {
   /** Seconds since the boards were last rebuilt. */
   private leaderboardTimer = 0;
 
+  /** Stops the purchase-credit subscription. Null before `onCreate`. */
+  private stopCreditWatch: (() => void) | null = null;
+
   override onCreate(): void {
     this.state = new GorgeState();
     this.setPatchRate(serverConfig.patchRateMs);
@@ -108,6 +112,11 @@ export class GorgeRoom extends Room<GorgeState> {
 
     this.onMessage(MessageType.ClaimTrophy, (client, message: ClaimTrophyMessage) => {
       this.handleClaimTrophy(client, message);
+    });
+
+    this.onMessage(MessageType.RequestRespawn, (client) => {
+      const player = this.state.players.get(client.sessionId);
+      if (player) this.respawn(client.sessionId, player, 'manual');
     });
 
     this.onMessage(MessageType.HazardHit, (client, message: HazardHitMessage) => {
@@ -138,6 +147,14 @@ export class GorgeRoom extends Room<GorgeState> {
       this.handleEquipCosmetic(client, this.auras, message?.slot);
     });
 
+    // A Bux purchase credits the stored profile from outside any room. If the
+    // buyer happens to be playing here, their live Wins have to move too - the
+    // next autosave writes that figure back over the profile, so crediting
+    // only one of the two would quietly undo the purchase.
+    this.stopCreditWatch = this.profiles.onCredit((playerId, amount) => {
+      this.applyPurchasedWins(playerId, amount);
+    });
+
     // Populate the boards before the first player can look at them.
     this.refreshLeaderboards();
 
@@ -146,7 +163,10 @@ export class GorgeRoom extends Room<GorgeState> {
     logger.info(SCOPE, `created roomId=${this.roomId} patchRate=${serverConfig.patchRateMs}ms`);
   }
 
-  override onJoin(client: Client, options?: { playerId?: string }): void {
+  override onJoin(
+    client: Client,
+    options?: { playerId?: string; legionName?: string },
+  ): void {
     const player = new PlayerState();
     player.sessionId = client.sessionId;
     this.progression.initialise(player);
@@ -156,6 +176,11 @@ export class GorgeRoom extends Room<GorgeState> {
     this.treadmills.initialise(player);
     this.trails.initialise(player);
     this.auras.initialise(player);
+
+    // Trimmed and capped: it is drawn on other players' screens, so an
+    // unbounded string would be somebody else's problem to render.
+    player.legionName =
+      typeof options?.legionName === 'string' ? options.legionName.slice(0, 32).trim() : '';
 
     // Restore earned progression for a returning client, then let the derived
     // fields (cap, backflips, movement speed) follow from it.
@@ -211,7 +236,27 @@ export class GorgeRoom extends Room<GorgeState> {
   }
 
   override onDispose(): void {
+    this.stopCreditWatch?.();
+    this.stopCreditWatch = null;
     logger.info(SCOPE, `disposed roomId=${this.roomId}`);
+  }
+
+  /**
+   * Mirror a purchase onto the player's live state, if they are in this room.
+   *
+   * The grant itself already happened in `BuxFulfilmentService`; this only
+   * keeps the replicated figure in step with it, using the same overflow guard
+   * so the two can never disagree about what the balance is.
+   */
+  private applyPurchasedWins(playerId: string, amount: number): void {
+    for (const [sessionId, id] of this.playerIds) {
+      if (id !== playerId) continue;
+      const player = this.state.players.get(sessionId);
+      if (!player) continue;
+      player.wins = creditWins(player.wins, amount);
+      logger.info(SCOPE, `purchase applied live sessionId=${sessionId} wins=${player.wins}`);
+      return;
+    }
   }
 
   /**

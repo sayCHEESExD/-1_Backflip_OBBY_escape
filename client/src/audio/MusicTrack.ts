@@ -44,6 +44,9 @@ const LEAD_GATE = [1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 1] as const;
  * loop: audio timing must not wobble with frame rate, and the Web Audio clock
  * the notes are scheduled against is independent of it.
  */
+/** The level this track was mixed at, under the effects. */
+const BASE_LEVEL = 0.34;
+
 export class MusicTrack {
   private readonly ctx: AudioContext;
   private readonly bus: GainNode;
@@ -59,8 +62,22 @@ export class MusicTrack {
 
     // The music sits under the effects, so a landing always cuts through.
     this.bus = ctx.createGain();
-    this.bus.gain.value = 0.34;
+    this.bus.gain.value = BASE_LEVEL;
     this.bus.connect(destination);
+  }
+
+  /**
+   * Music level, independent of the master.
+   *
+   * The portal offers separate master and music sliders, so the track needs a
+   * level of its own - scaling the master would move the effects with it.
+   * `BASE_LEVEL` is the mix this track was written at; the setting is a
+   * multiplier on it rather than an absolute, so "100%" still means the level
+   * the game was tuned for.
+   */
+  setLevel(level01: number): void {
+    const clamped = Number.isFinite(level01) ? Math.min(Math.max(level01, 0), 1) : 1;
+    this.bus.gain.value = BASE_LEVEL * clamped;
   }
 
   start(): void {

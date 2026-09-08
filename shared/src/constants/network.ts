@@ -34,6 +34,17 @@ export const MessageType = {
   ClaimTrophy: 'claimTrophy',
   /** Client -> server: report touching a hazard. */
   HazardHit: 'hazardHit',
+  /**
+   * Client -> server: "put me back at spawn".
+   *
+   * A REQUEST with no payload, like every other client message here. The
+   * server decides where a respawn lands and replies with the authoritative
+   * `Respawn`, so this can no more move a player than a trophy claim can pay
+   * one. It exists because the portal's pause menu offers a respawn button,
+   * and reusing `HazardHit` for it would mean reporting a hazard that was
+   * never touched.
+   */
+  RequestRespawn: 'requestRespawn',
   /** Client -> server: request to buy the boot the player is standing on. */
   BuyBoot: 'buyBoot',
   /** Client -> server: request a rebirth. */

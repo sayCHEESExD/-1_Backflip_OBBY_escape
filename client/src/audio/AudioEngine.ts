@@ -26,6 +26,8 @@ export class AudioEngine {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private music: MusicTrack | null = null;
+  /** Music level from the portal settings, applied when the graph is built. */
+  private musicLevel = 1;
   private sfx: Sfx | null = null;
 
   private volumeValue: number;
@@ -78,6 +80,33 @@ export class AudioEngine {
     write(VOLUME_KEY, String(clamped));
     this.applyGain();
     this.notify();
+  }
+
+  /**
+   * Set the music level, 0..1, independently of the master volume.
+   *
+   * Remembered even when the graph has not been built yet: audio only starts
+   * inside a user gesture, and the portal pushes its settings well before
+   * that, so a value that was not stored would simply be lost.
+   */
+  setMusicVolume(level01: number): void {
+    const clamped = Number.isFinite(level01) ? Math.min(Math.max(level01, 0), 1) : 1;
+    this.musicLevel = clamped;
+    this.music?.setLevel(clamped);
+  }
+
+  /**
+   * Move the volume by a step, for the keyboard controls.
+   *
+   * Raising it un-mutes, the same way dragging the slider up does: a player
+   * reaching for "louder" is asking to hear something, and leaving them muted
+   * while the number climbs is the kind of control that feels broken.
+   */
+  nudgeVolume(delta: number): void {
+    if (!Number.isFinite(delta) || delta === 0) return;
+    const next = Math.min(Math.max(this.volumeValue + delta, 0), 1);
+    if (delta > 0 && this.mutedValue && next > 0) this.setMuted(false);
+    this.setVolume(next);
   }
 
   setMuted(muted: boolean): void {
@@ -149,6 +178,7 @@ export class AudioEngine {
       this.master = master;
       this.sfx = new Sfx(ctx, master);
       this.music = new MusicTrack(ctx, master);
+      this.music.setLevel(this.musicLevel);
       this.music.start();
 
       logger.info(SCOPE, `started at ${ctx.sampleRate}Hz, volume ${this.volumeValue}`);

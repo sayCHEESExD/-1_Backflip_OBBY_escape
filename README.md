@@ -62,8 +62,26 @@ npm run build:shared
 | `npm run inspect:fbx`    | Dumps bones, meshes and texture paths from player.fbx |
 | `npm run verify:assets`  | Checks the player assets are present and unmodified   |
 
-Environment variables: `PORT`, `HOST` and `OBBY_DATA_DIR` on the server;
-`VITE_SERVER_URL` and `VITE_DEBUG=1` on the client.
+Environment variables: `PORT`, `HOST`, `OBBY_DATA_DIR`, `BLOXITY_GAME_SLUG`
+and `BLOXITY_WEBHOOK_SECRET` on the server; `VITE_SERVER_URL`, `VITE_DEBUG=1`
+and (dev only) `VITE_BLOXITY_PORTAL_URL` / `VITE_BLOXITY_API_URL` on the
+client.
+
+### Bloxity
+
+The game integrates the Bloxity SDK for identity, avatars, friends, portal
+settings and Bux. Two things need configuring outside the code:
+
+- **`BLOXITY_WEBHOOK_SECRET`** on the game server. Bloxity POSTs confirmed
+  purchases to `/bloxity/bux-webhook` with an `x-legion-webhook-secret` header;
+  without the secret set the endpoint refuses everything, because a route that
+  mints currency must not be open by default. `GET /health` reports whether it
+  is configured.
+- **Logging in from a dev machine.** Served from localhost with no URLs given,
+  the SDK points its portal and API at the local origin, so login would open
+  `http://localhost:5173/auth`. Set `VITE_BLOXITY_PORTAL_URL=https://bloxity.io`
+  and `VITE_BLOXITY_API_URL=https://api.bloxity.io` to reach the real portal.
+  Leave both unset in production - the SDK's own defaults are correct there.
 
 ### Deploying
 

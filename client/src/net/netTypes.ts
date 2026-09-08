@@ -10,6 +10,8 @@ import type { ArraySchema, MapSchema } from '@colyseus/schema';
  */
 export interface NetPlayerState extends PlayerMotionState {
   sessionId: string;
+  /** Bloxity display name, for friend-join toasts. Cosmetic only. */
+  legionName: string;
   x: number;
   y: number;
   z: number;

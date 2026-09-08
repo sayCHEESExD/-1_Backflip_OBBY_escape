@@ -1,5 +1,7 @@
 
 import { AudioEngine } from '../audio/AudioEngine.js';
+import { BloxityBridge, type BloxityHost } from '../bloxity/BloxityBridge.js';
+import { bloxity } from '../bloxity/BloxitySdk.js';
 import { ThirdPersonCamera } from '../camera/ThirdPersonCamera.js';
 import { clientConfig } from '../config/clientConfig.js';
 import { InputManager } from '../input/InputManager.js';
@@ -16,6 +18,7 @@ import { RendererManager } from '../rendering/RendererManager.js';
 import { WinCups } from '../rendering/WinCups.js';
 import { SceneManager } from '../rendering/SceneManager.js';
 import { DebugOverlay } from '../ui/DebugOverlay.js';
+import { FpsMeter } from '../ui/FpsMeter.js';
 import { ProgressHud } from '../ui/ProgressHud.js';
 import {
   AURA_TIERS,
@@ -26,7 +29,13 @@ import {
 } from '@obby/shared';
 import { AudioControls } from '../ui/AudioControls.js';
 import { CosmeticShop } from '../ui/CosmeticShop.js';
-import { MENU_KEYS, isTypingTarget, menuKeyFor } from '../config/menuKeys.js';
+import {
+  ACTION_KEYS,
+  MENU_KEYS,
+  isTypingTarget,
+  menuKeyFor,
+  type ActionId,
+} from '../config/menuKeys.js';
 import { iconMarkup } from '../config/uiIcons.js';
 import { injectMobileStyles } from '../ui/mobileStyles.js';
 import { modalLayer } from '../ui/ModalLayer.js';
@@ -41,6 +50,15 @@ const SCOPE = 'Game';
 
 /** Seconds between debug overlay repaints. */
 const OVERLAY_INTERVAL = 0.25;
+
+/**
+ * Volume moved by one press of the volume keys.
+ *
+ * Ten steps across the whole range: coarse enough that a quick tap is
+ * audible, fine enough that holding the key ramps smoothly rather than
+ * jumping between silent and loud.
+ */
+const VOLUME_STEP = 0.1;
 
 /**
  * Composition root. Owns every subsystem and defines the per-frame update
@@ -63,6 +81,10 @@ export class Game {
   private readonly auraShop: CosmeticShop;
   private readonly audio = new AudioEngine();
   private readonly audioControls: AudioControls;
+  /** Player-facing frame counter, shown only when the portal asks for it. */
+  private readonly fpsMeter: FpsMeter;
+  /** Bloxity: identity, avatar, friends, portal settings and Bux. */
+  private readonly bloxityBridge: BloxityBridge;
   /** One pooled debris burst shared by every player in the room. */
   private readonly debris = new LandingDebris();
   /** Pooled trophy burst, played when the server awards Wins. */
@@ -92,6 +114,17 @@ export class Game {
 
   /** Stops the modal watcher. Null until `start`. */
   private unwatchModals: (() => void) | null = null;
+
+  /**
+   * True while the room's EXISTING players are being delivered.
+   *
+   * Colyseus reports players already in the room through the same callback as
+   * one who walks in later, and the portal has a different toast for each -
+   * "your friend is in here" is not "your friend just arrived". The initial
+   * batch arrives synchronously when the handler is registered, so a task
+   * boundary is enough to tell the two apart.
+   */
+  private initialSyncPending = false;
 
   /**
    * Last replicated Wins total, used to spot an actual award.
@@ -182,6 +215,12 @@ export class Game {
     );
 
     this.audioControls = new AudioControls(container, this.audio, 298);
+    this.fpsMeter = new FpsMeter(container);
+
+    // Bloxity gets a narrow host rather than the Game object: it is wiring,
+    // and every entry below is either a setting the portal owns or a request
+    // it can make. None of them decide anything the server is responsible for.
+    this.bloxityBridge = new BloxityBridge(container, this.bloxityHost(), menuKeyFor('bloxity')?.label ?? '');
     this.sceneManager.scene.add(this.debris.mesh);
     this.sceneManager.scene.add(this.winCups.mesh);
     // A remote landing is reconstructed from replicated `grounded` - it throws
@@ -230,6 +269,33 @@ export class Game {
     });
   }
 
+  /**
+   * The settings and actions the Bloxity portal may drive.
+   *
+   * Each one is forwarded to the subsystem that already owns that concern -
+   * volume to the audio engine, resolution to the renderer, sensitivity to
+   * mouse look - so the portal never becomes a second owner of anything.
+   */
+  private bloxityHost(): BloxityHost {
+    return {
+      setMasterVolume: (level) => this.audio.setVolume(level),
+      setMusicVolume: (level) => this.audio.setMusicVolume(level),
+      setGraphicsQuality: (level) => this.renderer.setQuality(level),
+      setShowFps: (visible) => this.fpsMeter.setVisible(visible),
+      setCameraSensitivity: (scale) => this.input.look.setSensitivityScale(scale),
+      setPanelOpacity: (opacity) => {
+        document.documentElement.style.setProperty(
+          '--obby-panel-opacity',
+          String(Math.min(Math.max(opacity, 0.2), 1)),
+        );
+      },
+      // A REQUEST. The server decides where a respawn lands and replies with
+      // the authoritative message, exactly as it does for a fall.
+      respawn: () => this.network.requestRespawn(),
+      getCharacterForAvatar: () => this.localPlayer?.character ?? null,
+    };
+  }
+
   /** Load assets and build the world. Networking is started separately. */
   async initialise(): Promise<PlayerModelReport> {
     this.world.addTo(this.sceneManager.scene);
@@ -247,6 +313,9 @@ export class Game {
 
   /** Join the Colyseus room. Rendering continues even if this fails. */
   async connect(): Promise<void> {
+    // Introduce the player by their Bloxity name, so other clients can raise
+    // a friend-joined toast. Guests are named too, so this is rarely empty.
+    this.network.setDisplayName(this.bloxityBridge.playerName);
     await this.network.connect();
   }
 
@@ -322,6 +391,7 @@ export class Game {
     this.renderer.renderer.render(this.sceneManager.scene, this.camera.camera);
 
     this.updateDiagnostics(delta);
+    this.fpsMeter.setFps(this.fps);
   }
 
   start(): void {
@@ -336,10 +406,17 @@ export class Game {
     this.input.attach(this.renderer.renderer.domElement);
     // Audio waits for a real gesture; this only arms the listeners.
     this.audio.attach();
+
+    // After the world and the local player exist, so the first avatar push
+    // has something to dress.
+    this.bloxityBridge.start();
+    bloxity.gameplayStart();
   }
 
   dispose(): void {
     window.removeEventListener('keydown', this.onMenuKey);
+    this.bloxityBridge.dispose();
+    this.fpsMeter.dispose();
     this.unwatchModals?.();
     this.unwatchModals = null;
     this.input.detach();
@@ -461,14 +538,36 @@ export class Game {
    * only one panel is ever up and the pointer lock follows automatically.
    */
   private readonly onMenuKey = (event: KeyboardEvent): void => {
-    if (event.repeat || isTypingTarget(event.target)) return;
+    if (isTypingTarget(event.target)) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
 
+    // Embedded, Escape belongs to the PORTAL: it owns the pause menu, and its
+    // Resume is what puts the cursor back. `true` asks for that re-lock.
+    // `ModalLayer` has already closed a panel if one was up, and only leaves
+    // the event unconsumed when the player was actually playing.
+    if (event.key === 'Escape') {
+      if (!event.defaultPrevented && bloxity.isEmbedded()) bloxity.showPortalMenu(true);
+      return;
+    }
+
+    // Rail actions first, because one of them repeats and the panel keys
+    // deliberately do not.
+    const action = ACTION_KEYS.find((b) => b.code === event.code);
+    if (action) {
+      if (event.repeat && !action.repeatable) return;
+      event.preventDefault();
+      this.runAction(action.id);
+      return;
+    }
+
+    if (event.repeat) return;
     const binding = MENU_KEYS.find((b) => b.code === event.code);
     if (!binding) return;
 
     const panel =
-      binding.id === 'rebirth'
+      binding.id === 'bloxity'
+        ? this.bloxityBridge.menuPanel
+        : binding.id === 'rebirth'
         ? this.rebirthPanel
         : binding.id === 'trails'
           ? this.trailShop
@@ -477,6 +576,27 @@ export class Game {
     event.preventDefault();
     panel.toggle();
   };
+
+  /**
+   * Run a rail action bound to a key.
+   *
+   * These exist because the rail cannot be clicked during play - the pointer
+   * is locked - and a panel's backdrop covers it the rest of the time. The
+   * audio engine still owns muting and volume; this only asks.
+   */
+  private runAction(id: ActionId): void {
+    switch (id) {
+      case 'muteToggle':
+        this.audio.toggleMuted();
+        return;
+      case 'volumeDown':
+        this.audio.nudgeVolume(-VOLUME_STEP);
+        return;
+      case 'volumeUp':
+        this.audio.nudgeVolume(VOLUME_STEP);
+        return;
+    }
+  }
 
   private snapCameraIfPlaced(): void {
     const player = this.localPlayer;
@@ -497,6 +617,17 @@ export class Game {
     this.localSessionId = sessionId;
     this.remotePlayers.setLocalSessionId(sessionId);
     this.overlay?.setSessionId(sessionId);
+
+    // Tell the portal which room a friend's invite should land in. Colyseus
+    // routes a full room's overflow to a new one, so this is the only id that
+    // actually means "here".
+    this.bloxityBridge.setRoom(this.network.roomId ?? '');
+
+    // Everyone already present arrives in the next synchronous batch.
+    this.initialSyncPending = true;
+    window.setTimeout(() => {
+      this.initialSyncPending = false;
+    }, 0);
   }
 
   private onPlayerAdded(sessionId: string, player: NetPlayerState): void {
@@ -506,6 +637,12 @@ export class Game {
     }
     this.remotePlayers.add(sessionId, player);
     this.overlay?.setRemoteCount(this.remotePlayers.count);
+
+    // The portal raises a toast only if this name is one of the player's
+    // friends; it is given every name and decides for itself.
+    const name = player.legionName;
+    if (this.initialSyncPending) this.bloxityBridge.playerInRoom(name);
+    else this.bloxityBridge.playerJoined(name);
   }
 
   private onPlayerChanged(sessionId: string, player: NetPlayerState): void {

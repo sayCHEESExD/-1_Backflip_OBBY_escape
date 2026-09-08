@@ -10,6 +10,16 @@ export interface ServerConfig {
   readonly patchRateMs: number;
   /** Directory holding persisted player profiles. */
   readonly dataDir: string;
+  /** The slug this game is registered under on bloxity.io. */
+  readonly gameSlug: string;
+  /**
+   * Shared secret on Bloxity's purchase webhook.
+   *
+   * Unset means the fulfilment endpoint refuses every request. That is the
+   * safe default for a route that mints currency - an open one would let
+   * anyone POST themselves Wins.
+   */
+  readonly bloxityWebhookSecret: string;
 }
 
 const int = (value: string | undefined, fallback: number): number => {
@@ -25,4 +35,6 @@ export const serverConfig: ServerConfig = {
   // Relative to the server package, which is the working directory for both
   // `npm run dev` and `npm start`, so a restart finds the same file either way.
   dataDir: resolve(process.env['OBBY_DATA_DIR'] ?? 'data'),
+  gameSlug: process.env['BLOXITY_GAME_SLUG'] ?? '1-backflip-obby-escape',
+  bloxityWebhookSecret: process.env['BLOXITY_WEBHOOK_SECRET'] ?? '',
 };

@@ -22,10 +22,31 @@ export const REBIRTH = {
   multiplierPerRebirth: 0.5,
 } as const;
 
-/** Highest level reachable at this rebirth: 10 x (rebirth + 1). */
+/**
+ * The largest level and rebirth count that can be replicated.
+ *
+ * `PlayerState.level`, `maxLevel` and `rebirths` are all `uint32`, so a figure
+ * past this WRAPS on the wire - and a wrapped level cap is worse than a cap,
+ * because it would silently drop a player's ceiling back to nothing. Clamping
+ * saturates instead.
+ *
+ * There is no design limit anywhere: the rebirth ladder raises the cap by ten
+ * levels every time, forever. This is the arithmetic edge of the protocol, and
+ * at ten levels per rebirth it sits four hundred million rebirths away.
+ */
+export const MAX_REPLICATED_LEVEL = 4294967295;
+
+/**
+ * Highest level reachable at this rebirth: 10 x (rebirth + 1).
+ *
+ * Unbounded by design - reaching the cap is never the end of progression, it
+ * is the gate to the next rebirth. The clamp is a protocol guard, not a
+ * ceiling on play.
+ */
 export const maxLevelForRebirth = (rebirth: number): number => {
   const count = Number.isFinite(rebirth) ? Math.max(0, Math.floor(rebirth)) : 0;
-  return REBIRTH.levelsPerRebirth * (count + 1);
+  const cap = REBIRTH.levelsPerRebirth * (count + 1);
+  return Math.min(cap, MAX_REPLICATED_LEVEL);
 };
 
 /** Progression multiplier at this rebirth: 1 + rebirth x 0.5. */

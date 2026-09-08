@@ -1,3 +1,4 @@
+import { bloxity } from './bloxity/BloxitySdk.js';
 import { clientConfig } from './config/clientConfig.js';
 import { Game } from './core/Game.js';
 import { GameLoop } from './core/GameLoop.js';
@@ -8,13 +9,24 @@ const SCOPE = 'main';
 const boot = document.getElementById('boot');
 const bootStatus = document.getElementById('boot-status');
 
+/**
+ * Report progress to the player AND to the portal.
+ *
+ * The portal shows its own loading screen over an embedded game and waits for
+ * `loadingEnd` to take it away, so the two have to advance together - a boot
+ * step that only updated the local panel would leave the portal's cover up
+ * over a game that had already started.
+ */
 const setBootStatus = (text: string): void => {
   if (bootStatus) bootStatus.textContent = text;
+  bloxity.loadingStep(text);
 };
 
 const showBootError = (error: unknown): void => {
   const message = error instanceof Error ? error.message : String(error);
   logger.error(SCOPE, message, error);
+  // The portal's cover would otherwise sit over the error the player needs.
+  bloxity.loadingEnd();
   if (!bootStatus) return;
   bootStatus.className = 'err';
   bootStatus.textContent = `Failed to start:\n${message}`;
@@ -23,6 +35,10 @@ const showBootError = (error: unknown): void => {
 const main = async (): Promise<void> => {
   const container = document.getElementById('app');
   if (!container) throw new Error('#app container missing from index.html');
+
+  // FIRST, before any namespace is touched. Every Bloxity call in the client
+  // goes through the façade, which is a no-op until this has run.
+  bloxity.init();
 
   const game = new Game(container);
 
@@ -55,6 +71,9 @@ const main = async (): Promise<void> => {
   // can never progress - hiding that failure is what makes a broken deployment
   // look like broken gameplay.
   if (boot && online) boot.hidden = true;
+  // Dismiss the portal's loading cover. Called even for an offline session:
+  // the game is playable and leaving the cover up would hide that.
+  bloxity.loadingEnd();
   logger.info(SCOPE, 'running');
 };
 

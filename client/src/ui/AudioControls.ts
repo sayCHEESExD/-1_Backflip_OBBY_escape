@@ -1,3 +1,4 @@
+import { actionKeyFor } from '../config/menuKeys.js';
 import type { AudioEngine } from '../audio/AudioEngine.js';
 
 /**
@@ -10,6 +11,8 @@ import type { AudioEngine } from '../audio/AudioEngine.js';
 export class AudioControls {
   private readonly root: HTMLDivElement;
   private readonly button: HTMLButtonElement;
+  /** The speaker glyph. Its own node so the key badge survives a repaint. */
+  private readonly icon: HTMLSpanElement;
   private readonly slider: HTMLInputElement;
   private readonly audio: AudioEngine;
 
@@ -27,6 +30,20 @@ export class AudioControls {
     this.button.type = 'button';
     this.button.addEventListener('click', () => audio.toggleMuted());
 
+    this.icon = document.createElement('span');
+    this.button.appendChild(this.icon);
+
+    // The tile is only clickable where there is a cursor - on touch, or with
+    // a panel open over the top. A key is the way in the rest of the time, so
+    // it is advertised on the control rather than left to be discovered.
+    const muteKey = actionKeyFor('muteToggle');
+    if (muteKey) {
+      const badge = document.createElement('span');
+      badge.className = 'obby-menu-key';
+      badge.textContent = muteKey.label;
+      this.button.appendChild(badge);
+    }
+
     this.slider = document.createElement('input');
     this.slider.className = 'obby-audio__slider';
     this.slider.type = 'range';
@@ -40,6 +57,16 @@ export class AudioControls {
     });
 
     this.root.append(this.button, this.slider);
+
+    const down = actionKeyFor('volumeDown');
+    const up = actionKeyFor('volumeUp');
+    if (down && up) {
+      const hint = document.createElement('div');
+      hint.className = 'obby-audio__hint';
+      hint.textContent = `${down.label} / ${up.label}`;
+      this.root.appendChild(hint);
+    }
+
     parent.appendChild(this.root);
 
     audio.onChange(() => this.render());
@@ -51,7 +78,9 @@ export class AudioControls {
   }
 
   private render(): void {
-    this.button.textContent = this.audio.muted ? '🔇' : '🔊';
+    // Only the glyph: writing to the button's own textContent would take the
+    // key badge with it.
+    this.icon.textContent = this.audio.muted ? '🔇' : '🔊';
     this.button.title = this.audio.muted ? 'Unmute' : 'Mute';
     this.root.classList.toggle('obby-audio--muted', this.audio.muted);
     const percent = Math.round(this.audio.volume * 100);
@@ -80,6 +109,7 @@ const injectStyles = (): void => {
 }
 /* Same rail tile as the other launchers - see CosmeticShop for the pattern. */
 .obby-audio__btn {
+  position: relative;
   width: calc(68px * var(--obby-ui-scale, 1));
   height: calc(44px * var(--obby-ui-scale, 1));
   padding: 0;
@@ -95,6 +125,17 @@ const injectStyles = (): void => {
 .obby-audio__btn:hover { filter: brightness(1.1); }
 .obby-audio__btn:active { transform: translateY(3px); box-shadow: none; }
 .obby-audio--muted .obby-audio__btn { background-color: #5b6a86; }
+
+/* Which keys move the slider. Hidden on touch, where it can just be dragged. */
+.obby-audio__hint {
+  margin-top: calc(-2px * var(--obby-ui-scale, 1));
+  color: #cfe0f5;
+  font: 800 calc(10px * var(--obby-ui-scale, 1))/1 system-ui, "Segoe UI", Roboto, sans-serif;
+  text-shadow: 0 1px 0 #16202e;
+  letter-spacing: 0.14em;
+  pointer-events: none;
+}
+body.obby-touch-mode .obby-audio__hint { display: none; }
 
 .obby-audio__slider {
   width: calc(66px * var(--obby-ui-scale, 1));

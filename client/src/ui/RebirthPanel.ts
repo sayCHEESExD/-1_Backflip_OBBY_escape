@@ -234,7 +234,12 @@ const injectStyles = (): void => {
   inset: 0;
   display: grid;
   place-items: center;
-  background: rgba(6, 10, 18, 0.55);
+  /*
+   * Backdrop dimming, scaled by the portal's background_transparency setting.
+   * 0.62 x the default 0.9 is the 0.55 this panel has always used, so a player
+   * who never touches the setting sees no change.
+   */
+  background: rgba(6, 10, 18, calc(0.62 * var(--obby-panel-opacity, 0.9)));
   z-index: 40;
   font-family: system-ui, "Segoe UI", Roboto, sans-serif;
 }

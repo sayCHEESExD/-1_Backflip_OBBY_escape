@@ -17,6 +17,9 @@ export class RendererManager {
   /** rAF handle for a deferred re-measure; 0 when none is pending. */
   private pendingSizeRetry = 0;
 
+  /** Extra cap on pixel ratio from the portal's graphics setting. */
+  private qualityPixelRatio = Number.POSITIVE_INFINITY;
+
   constructor(container: HTMLElement) {
     this.container = container;
 
@@ -50,6 +53,47 @@ export class RendererManager {
     this.listeners.add(listener);
     listener(this.width, this.height);
     return () => this.listeners.delete(listener);
+  }
+
+  /**
+   * Apply a graphics quality level from the portal settings.
+   *
+   * Only the two knobs that can change after the context exists are moved:
+   * render resolution and shadows. Antialiasing is fixed at construction by
+   * WebGL itself, so a quality drop lowers the pixel ratio instead - which is
+   * where the frame time actually goes on a weak GPU anyway.
+   *
+   * An unknown level leaves the renderer exactly as it is rather than guessing
+   * at a default and silently downgrading somebody's machine.
+   */
+  setQuality(level: string): void {
+    let pixelRatio: number;
+    let shadows: boolean;
+    switch (level) {
+      case 'Low':
+        pixelRatio = 1;
+        shadows = false;
+        break;
+      case 'Medium':
+        pixelRatio = 1.25;
+        shadows = true;
+        break;
+      case 'High':
+      case 'Ultra':
+        pixelRatio = Number.POSITIVE_INFINITY;
+        shadows = true;
+        break;
+      default:
+        return;
+    }
+
+    this.qualityPixelRatio = pixelRatio;
+    if (this.renderer.shadowMap.enabled !== shadows) {
+      this.renderer.shadowMap.enabled = shadows;
+      // Materials cache the shadow configuration they were compiled against.
+      this.renderer.shadowMap.needsUpdate = true;
+    }
+    this.applySize();
   }
 
   get width(): number {
@@ -90,7 +134,11 @@ export class RendererManager {
       return;
     }
 
-    const pixelRatio = Math.min(window.devicePixelRatio || 1, clientConfig.maxPixelRatio);
+    const pixelRatio = Math.min(
+      window.devicePixelRatio || 1,
+      clientConfig.maxPixelRatio,
+      this.qualityPixelRatio,
+    );
     this.renderer.setPixelRatio(pixelRatio);
     this.renderer.setSize(width, height, false);
 

@@ -1,4 +1,4 @@
-import { STARTER_BOOT_MASK } from '@obby/shared';
+import { STARTER_BOOT_MASK, creditWins } from '@obby/shared';
 import { createPersistence, type PersistenceAdapter, type StoredProfile } from '../persistence/index.js';
 import { logger } from '../util/logger.js';
 import type { PlayerState } from '../rooms/state/PlayerState.js';
@@ -40,6 +40,7 @@ const emptyProfile = (): Profile => ({
 export class ProfileStore {
   private readonly profiles = new Map<string, Profile>();
   private readonly adapter: PersistenceAdapter;
+  private readonly creditListeners = new Set<(playerId: string, amount: number) => void>();
   private opened = false;
 
   constructor(adapter: PersistenceAdapter) {
@@ -101,6 +102,46 @@ export class ProfileStore {
     this.profiles.set(playerId, profile);
     // The adapter coalesces these; durability is guaranteed by `flush`.
     this.adapter.put(playerId, profile);
+  }
+
+  /**
+   * Add purchased Wins to a profile, online or not.
+   *
+   * The only writer here that is not a save of observed play, and it exists
+   * for exactly one caller - `BuxFulfilmentService`. It credits the STORED
+   * profile, which is what a player who has logged off will find waiting; a
+   * player who is online also has a live `PlayerState` whose Wins would
+   * overwrite this at the next autosave, so listeners are notified and the
+   * room applies the same credit there. Both halves or neither.
+   *
+   * @returns the profile's new balance, already guarded against the uint32
+   * wallet wrapping.
+   */
+  creditWins(playerId: string, amount: number): number {
+    if (!playerId || amount <= 0) return this.profiles.get(playerId)?.wins ?? 0;
+
+    const profile = this.profiles.get(playerId) ?? emptyProfile();
+    profile.wins = creditWins(profile.wins, amount);
+    this.profiles.set(playerId, profile);
+    this.adapter.put(playerId, profile);
+    // Durable immediately: a purchase is real money, and losing it to a crash
+    // inside the write debounce is not a trade worth making.
+    this.adapter.flush();
+
+    for (const listener of this.creditListeners) listener(playerId, amount);
+    return profile.wins;
+  }
+
+  /**
+   * Be told when a profile is credited, so a live player can be credited too.
+   *
+   * @returns a function that stops listening.
+   */
+  onCredit(listener: (playerId: string, amount: number) => void): () => void {
+    this.creditListeners.add(listener);
+    return () => {
+      this.creditListeners.delete(listener);
+    };
   }
 
   /** Force everything to durable storage. Called on shutdown. */

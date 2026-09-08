@@ -58,16 +58,19 @@ export const injectMobileStyles = (): void => {
   }
   body.obby-touch-mode .obby-rebirth-btn,
   body.obby-touch-mode .obby-cos-btn,
+  body.obby-touch-mode .obby-blox-btn,
   body.obby-touch-mode .obby-audio {
     left: calc(var(--obby-safe-l) + 8px);
     width: 54px;
   }
   body.obby-touch-mode .obby-rebirth-btn,
-  body.obby-touch-mode .obby-cos-btn {
+  body.obby-touch-mode .obby-cos-btn,
+  body.obby-touch-mode .obby-blox-btn {
     height: 54px;
     border-radius: 11px;
     font-size: 10px;
   }
+  body.obby-touch-mode .obby-blox-btn__icon { font-size: 26px; }
   /* Same proportions as desktop - roughly 78% of the tile - at mobile size. */
   body.obby-touch-mode .obby-rebirth-btn__icon,
   body.obby-touch-mode .obby-cos-btn__icon { font-size: 41px; }
@@ -84,6 +87,9 @@ export const injectMobileStyles = (): void => {
   }
   body.obby-touch-mode .obby-audio__btn { width: 54px; height: 36px; }
   body.obby-touch-mode .obby-audio__slider { width: 52px; }
+  /* Below the audio block, which is a tile plus its slider rather than a
+     plain tile, so it does not sit on the 60px step the others use. */
+  body.obby-touch-mode .obby-blox-btn { top: calc(var(--obby-safe-t) + 300px); }
 
   /*
    * The HUD sits ABOVE the touch controls rather than beside them: the stick
@@ -132,6 +138,7 @@ export const injectMobileStyles = (): void => {
    */
   body.obby-touch-mode .obby-rebirth-btn,
   body.obby-touch-mode .obby-cos-btn,
+  body.obby-touch-mode .obby-blox-btn,
   body.obby-touch-mode .obby-audio {
     top: calc(var(--obby-safe-t) + 6px);
   }
@@ -140,6 +147,7 @@ export const injectMobileStyles = (): void => {
     left: calc(var(--obby-safe-l) + 118px + (var(--obby-rail-top, 70px) - 70px) * 0.79);
   }
   body.obby-touch-mode .obby-audio { left: calc(var(--obby-safe-l) + 298px); }
+  body.obby-touch-mode .obby-blox-btn { left: calc(var(--obby-safe-l) + 358px); }
   body.obby-touch-mode .obby-wins { top: calc(var(--obby-safe-t) + 6px); }
 
   body.obby-touch-mode .obby-hud { bottom: calc(var(--obby-safe-b) + 8px); width: min(420px, 46vw); }

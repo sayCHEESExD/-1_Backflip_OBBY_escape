@@ -92,11 +92,21 @@ export class ProgressHud {
     this.root.remove();
   }
 
+  /**
+   * Draw the bar, and at the cap say what unblocks it.
+   *
+   * "MAX" read as an ending, which is the opposite of what the level cap
+   * means here: it is the gate to a rebirth, which raises the cap and the
+   * multiplier and is the only way the curve continues. So the label is the
+   * instruction rather than the state, and it is styled as a call to action
+   * instead of another figure.
+   */
   private renderBar(progress: LevelProgress): void {
     this.fill.style.width = `${(progress.fraction * 100).toFixed(2)}%`;
     this.amountLabel.textContent = progress.capped
-      ? 'MAX'
+      ? 'Rebirth To Level Up!'
       : `${formatSpeed(progress.into)}/${formatSpeed(progress.required)}`;
+    this.amountLabel.classList.toggle('obby-hud__amount--rebirth', progress.capped);
   }
 }
 
@@ -198,6 +208,24 @@ const injectStyles = (): void => {
 }
 .obby-hud__level { left: 12px; }
 .obby-hud__amount { right: 12px; }
+/*
+ * The rebirth prompt. Gold and slowly pulsing, so it reads as something to
+ * act on rather than the number it replaced - and slow enough not to compete
+ * with the level-up flash that plays on the same element's parent.
+ */
+.obby-hud__amount--rebirth {
+  color: #ffd75e;
+  text-shadow: 0 2px 0 #2a1038, 0 -1px 0 #2a1038, 1px 0 0 #2a1038,
+    -1px 0 0 #2a1038, 0 0 10px rgba(255, 215, 94, 0.55);
+  animation: obby-hud-rebirth-pulse 1.6s ease-in-out infinite;
+}
+@keyframes obby-hud-rebirth-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.62; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .obby-hud__amount--rebirth { animation: none; }
+}
 .obby-hud--levelup .obby-hud__bar {
   animation: obby-hud-pop 420ms ease-out;
 }

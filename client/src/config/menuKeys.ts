@@ -19,7 +19,7 @@ export interface MenuTarget {
 
 export interface MenuBinding {
   /** Identifies the panel this opens. */
-  readonly id: 'rebirth' | 'trails' | 'auras';
+  readonly id: 'rebirth' | 'trails' | 'auras' | 'bloxity';
   /** `KeyboardEvent.code`, so the binding is layout-independent. */
   readonly code: string;
   /** Shown on the panel's rail button. */
@@ -30,7 +30,42 @@ export const MENU_KEYS: readonly MenuBinding[] = [
   { id: 'rebirth', code: 'Digit1', label: '1' },
   { id: 'trails', code: 'Digit2', label: '2' },
   { id: 'auras', code: 'Digit3', label: '3' },
+  { id: 'bloxity', code: 'Digit4', label: '4' },
 ];
+
+/**
+ * Keyboard actions that are not panels.
+ *
+ * These exist because the cursor never leaves gameplay: the pointer is locked
+ * while playing, and while a panel IS open the rail sits behind that panel's
+ * backdrop - so a rail control that only responds to a click can never be
+ * reached. Anything on the rail therefore needs a key, and every key in the
+ * game is declared in this one file so two of them cannot quietly collide.
+ *
+ * M, minus and equals are free: movement owns WASD, the arrows, Space and
+ * Shift, and the digit row opens the panels.
+ */
+export type ActionId = 'muteToggle' | 'volumeDown' | 'volumeUp';
+
+export interface ActionBinding {
+  readonly id: ActionId;
+  /** `KeyboardEvent.code`, so the binding is layout-independent. */
+  readonly code: string;
+  /** Shown on the control this drives. */
+  readonly label: string;
+  /** Whether holding the key should repeat - a volume ramp, not a toggle. */
+  readonly repeatable: boolean;
+}
+
+export const ACTION_KEYS: readonly ActionBinding[] = [
+  { id: 'muteToggle', code: 'KeyM', label: 'M', repeatable: false },
+  { id: 'volumeDown', code: 'Minus', label: '\u2212', repeatable: true },
+  { id: 'volumeUp', code: 'Equal', label: '+', repeatable: true },
+];
+
+/** The binding for an action, for the control that advertises it. */
+export const actionKeyFor = (id: ActionId): ActionBinding | undefined =>
+  ACTION_KEYS.find((binding) => binding.id === id);
 
 /** The binding for a panel, for the button that advertises it. */
 export const menuKeyFor = (id: MenuBinding['id']): MenuBinding | undefined =>

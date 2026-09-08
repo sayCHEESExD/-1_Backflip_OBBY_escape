@@ -20,6 +20,16 @@ import {
 export class PlayerState extends Schema {
   @type('string') sessionId = '';
 
+  /**
+   * The player's Bloxity display name, for friend-join toasts.
+   *
+   * Client-supplied and PURELY COSMETIC - it names a player on another
+   * player's screen and nothing else. Progression, rewards and position stay
+   * exactly as server-owned as they were; nothing reads this to decide
+   * anything.
+   */
+  @type('string') legionName = '';
+
   @type('float32') x: number = SPAWN_POSITION.x;
   @type('float32') y: number = SPAWN_POSITION.y;
   @type('float32') z: number = SPAWN_POSITION.z;
@@ -69,7 +79,15 @@ export class PlayerState extends Schema {
   /** Server-authoritative progression. Not driven by gameplay yet. */
   @type('uint32') level = 1;
   @type('float32') progression = 0;
-  @type('uint16') rebirths = 0;
+  /**
+   * Rebirths performed. `uint32`, not `uint16`.
+   *
+   * The ladder has no end - each rebirth raises the level cap by ten - so the
+   * only thing that could ever stop it is the field it travels in. At
+   * `uint16` that was a real wall: rebirth 65536 wrapped to zero and took the
+   * player's cap back to ten with it.
+   */
+  @type('uint32') rebirths = 0;
   @type('uint32') backflips = 0;
   /** Trophy wins. Awarded by TrophyService only - never read from a client. */
   @type('uint32') wins = 0;
@@ -86,7 +104,11 @@ export class PlayerState extends Schema {
    */
   @type('float32') moveMultiplier = 1;
   /** Highest level reachable at the current rebirth. */
-  @type('uint16') maxLevel = 10;
+  /**
+   * Level cap for the current rebirth. `uint32`, for the same reason as
+   * `rebirths`: at `uint16` the cap wrapped at rebirth 6553 and collapsed.
+   */
+  @type('uint32') maxLevel = 10;
 
   /**
    * Treadmill the player is physically standing on, or 0.
