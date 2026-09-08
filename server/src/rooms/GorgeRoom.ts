@@ -24,7 +24,7 @@ import { BootService } from '../progression/BootService.js';
 import { CosmeticService } from '../progression/CosmeticService.js';
 import { AURA_BINDING, TRAIL_BINDING } from '../progression/cosmeticBindings.js';
 import { profileStore } from '../progression/ProfileStore.js';
-import { LeaderboardService } from '../progression/LeaderboardService.js';
+import { LeaderboardService, type RankedSource } from '../progression/LeaderboardService.js';
 import { ProgressionService } from '../progression/ProgressionService.js';
 import { RebirthService } from '../progression/RebirthService.js';
 import { SpeedService } from '../progression/SpeedService.js';
@@ -513,12 +513,27 @@ export class GorgeRoom extends Room<GorgeState> {
    * off the wire entirely.
    */
   private refreshLeaderboards(): void {
-    const ranked = this.leaderboards.build(this.profiles.all);
+    const ranked = this.leaderboards.build(this.profiles.all, this.liveProgression());
     let changed = false;
     changed = this.applyBoard(this.state.topRebirths, ranked.get('rebirths')) || changed;
     changed = this.applyBoard(this.state.topSpeed, ranked.get('totalSpeed')) || changed;
     changed = this.applyBoard(this.state.topWins, ranked.get('wins')) || changed;
     if (changed) this.state.leaderboardVersion += 1;
+  }
+
+  /**
+   * What the players in this room have earned, right now.
+   *
+   * The store only holds what was last saved; these are the authoritative
+   * figures the server is already maintaining this tick. Read-only - the
+   * leaderboard observes progression and never writes it, so this yields the
+   * state rather than saving it.
+   */
+  private *liveProgression(): Iterable<readonly [string, RankedSource]> {
+    for (const [sessionId, playerId] of this.playerIds) {
+      const player = this.state.players.get(sessionId);
+      if (player) yield [playerId, player] as const;
+    }
   }
 
   /** Copy ranked rows into a replicated array. @returns true if anything moved. */

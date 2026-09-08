@@ -28,6 +28,7 @@ export interface ModalPanel {
  */
 class ModalLayer {
   private readonly panels = new Set<ModalPanel>();
+  private readonly watchers = new Set<() => void>();
   private listening = false;
 
   register(panel: ModalPanel): void {
@@ -48,6 +49,27 @@ class ModalLayer {
     for (const other of this.panels) {
       if (other !== panel) other.close();
     }
+    this.changed();
+  }
+
+  /**
+   * Be told the moment the open panel changes, in the SAME event that changed
+   * it.
+   *
+   * Polling `anyOpen` once a frame is enough to decide whether gameplay input
+   * is suppressed, but not to re-acquire the pointer lock: a browser only
+   * grants that inside the gesture that asked for it, and by the next frame
+   * the gesture is over. Escape is the case that actually bites - it carries
+   * no user activation at all - so the request has to be made here, while the
+   * keystroke is still on the stack.
+   *
+   * @returns a function that stops watching.
+   */
+  watch(listener: () => void): () => void {
+    this.watchers.add(listener);
+    return () => {
+      this.watchers.delete(listener);
+    };
   }
 
   /** True while any registered panel is showing. */
@@ -61,6 +83,12 @@ class ModalLayer {
   /** Close whatever is showing. */
   closeAll(): void {
     for (const panel of this.panels) panel.close();
+    this.changed();
+  }
+
+  /** Tell every watcher the open panel changed. */
+  private changed(): void {
+    for (const watcher of this.watchers) watcher();
   }
 
   /** One Escape handler for every panel, attached on first registration. */

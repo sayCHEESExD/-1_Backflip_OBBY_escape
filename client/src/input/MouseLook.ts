@@ -18,7 +18,13 @@ const MAX_PITCH = 1.15;
  *   gameplay        -> cursor hidden, mouse steers the camera
  *   a panel opens   -> lock released, cursor free for its buttons
  *   the panel closes-> lock retaken, camera resumes at once
- *   Escape          -> the browser releases; a click on the world resumes
+ *   Escape, panel up-> the panel closes and the lock comes straight back
+ *   Escape, playing -> the browser releases; a click on the world resumes
+ *
+ * The two Escapes are deliberately different, and telling them apart is the
+ * whole job: one is "put me back in the game", the other is "let me out". The
+ * only thing that separates them is whether a panel was up, which is exactly
+ * what `suppressed` already records.
  *
  * The lock is taken on the player's FIRST gesture rather than waiting for a
  * deliberate click on the world. A browser will not grant it without one, so
@@ -63,6 +69,23 @@ export class MouseLook {
    * retaken - from then on.
    */
   private armed = false;
+
+  /**
+   * A re-lock that is owed but has not been granted.
+   *
+   * Closing a panel with Escape asks for the lock back, but a browser will not
+   * grant it from that keystroke: the HTML spec excludes Esc from the input
+   * events that count as user activation, precisely so a page cannot re-trap a
+   * cursor the user just escaped. The request is still made - some browsers
+   * and embeddings honour it - and when it is refused the debt is remembered
+   * and paid off on the player's very next real gesture, which is the W press
+   * or click they were about to make anyway.
+   *
+   * Set ONLY by a panel closing. An Escape during gameplay must never set it,
+   * or the first movement key would drag the player back into a lock they just
+   * asked to leave.
+   */
+  private pendingLock = false;
 
   get yaw(): number {
     return this.yawValue;
@@ -112,14 +135,19 @@ export class MouseLook {
 
     if (suppressed) {
       this.dragging = false;
+      this.pendingLock = false;
       if (this.locked) document.exitPointerLock();
       return;
     }
 
     // The panel closed. Take the lock straight back so the camera resumes
     // without the player having to click the world first - closing a menu IS
-    // the request to go back to playing.
-    if (wasSuppressed && this.armed) this.requestLock();
+    // the request to go back to playing. If the browser refuses, `pendingLock`
+    // keeps the request alive; it is cleared the moment the lock arrives.
+    if (wasSuppressed && this.armed) {
+      this.pendingLock = true;
+      this.requestLock();
+    }
   }
 
   /**
@@ -138,6 +166,7 @@ export class MouseLook {
   /** Release the lock and stop looking, without suppressing the source. */
   release(): void {
     this.dragging = false;
+    this.pendingLock = false;
     if (this.locked) document.exitPointerLock();
   }
 
@@ -158,9 +187,24 @@ export class MouseLook {
    * puts them back in.
    */
   private readonly onFirstGesture = (event: KeyboardEvent): void => {
-    if (event.key === 'Escape') return;
-    if (this.armed) return;
-    this.engage();
+    if (event.key === 'Escape') {
+      // Two very different Escapes arrive here, and `ModalLayer` has already
+      // told them apart: it consumes the one that closed a panel by preventing
+      // the default, and leaves the gameplay one alone for the browser. A
+      // consumed Escape means "put me back in the game", so the re-lock it
+      // just asked for stands. An unconsumed one means "let me out", and any
+      // re-lock still owed is written off so no movement key can quietly take
+      // the cursor back.
+      if (!event.defaultPrevented) this.pendingLock = false;
+      return;
+    }
+    if (!this.armed) {
+      this.engage();
+      return;
+    }
+    // A re-lock the browser refused during a panel close, paid off by the
+    // first keystroke that DOES carry user activation.
+    if (this.pendingLock && !this.locked && !this.suppressed) this.requestLock();
   };
 
   /** A click on the world resumes play after Escape released the lock. */
@@ -185,6 +229,7 @@ export class MouseLook {
   private readonly onLockChange = (): void => {
     if (this.locked) {
       this.lockEverGranted = true;
+      this.pendingLock = false;
       // A granted lock supersedes drag-to-look; the two must never both steer.
       this.dragging = false;
       return;

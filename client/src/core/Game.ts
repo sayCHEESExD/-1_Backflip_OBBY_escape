@@ -90,6 +90,9 @@ export class Game {
    */
   private lastLeaderboardVersion = -1;
 
+  /** Stops the modal watcher. Null until `start`. */
+  private unwatchModals: (() => void) | null = null;
+
   /**
    * Last replicated Wins total, used to spot an actual award.
    *
@@ -323,6 +326,13 @@ export class Game {
 
   start(): void {
     window.addEventListener('keydown', this.onMenuKey);
+    // Suppression is polled every frame as well, but a frame is too late to
+    // ask for the pointer lock back: the browser only grants it inside the
+    // gesture that asked. Escape closing a panel has to reach the input layer
+    // while that keystroke is still running.
+    this.unwatchModals = modalLayer.watch(() => {
+      this.input.setSuppressed(modalLayer.anyOpen);
+    });
     this.input.attach(this.renderer.renderer.domElement);
     // Audio waits for a real gesture; this only arms the listeners.
     this.audio.attach();
@@ -330,6 +340,8 @@ export class Game {
 
   dispose(): void {
     window.removeEventListener('keydown', this.onMenuKey);
+    this.unwatchModals?.();
+    this.unwatchModals = null;
     this.input.detach();
     this.remotePlayers.dispose();
     this.hud.dispose();

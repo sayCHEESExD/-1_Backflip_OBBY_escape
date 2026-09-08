@@ -85,6 +85,8 @@ export class NetworkClient {
   private room: Room<NetGorgeState> | null = null;
   private status: ConnectionStatus = 'idle';
   private lastSendAt = 0;
+  /** So a server too old to send boards is reported once, not every frame. */
+  private missingBoardsLogged = false;
 
   constructor(handlers: NetworkHandlers = {}) {
     this.client = new Client(clientConfig.serverUrl);
@@ -112,6 +114,19 @@ export class NetworkClient {
   get leaderboards(): LeaderboardSnapshot | null {
     const state = this.room?.state;
     if (!state) return null;
+    // A server built before the boards existed replicates no such field, and
+    // the boards would then draw empty forever with nothing to say why. That
+    // is indistinguishable from "nobody has scored yet" on screen, so it is
+    // called out once here instead - the difference between a deployment that
+    // is behind and a scoreboard that is simply new.
+    if (!state.topRebirths && !this.missingBoardsLogged) {
+      this.missingBoardsLogged = true;
+      logger.warn(
+        SCOPE,
+        'server replicates no leaderboard fields - it is older than this ' +
+          'client; redeploy the server',
+      );
+    }
     const rows = (entries: { name: string; value: number }[] | undefined) =>
       entries ? entries.map((e) => ({ name: e.name, value: e.value })) : [];
     return {

@@ -62,8 +62,27 @@ npm run build:shared
 | `npm run inspect:fbx`    | Dumps bones, meshes and texture paths from player.fbx |
 | `npm run verify:assets`  | Checks the player assets are present and unmodified   |
 
-Environment variables: `PORT` and `HOST` on the server; `VITE_SERVER_URL` and
-`VITE_DEBUG=1` on the client.
+Environment variables: `PORT`, `HOST` and `OBBY_DATA_DIR` on the server;
+`VITE_SERVER_URL` and `VITE_DEBUG=1` on the client.
+
+### Deploying
+
+The client is a static build (Netlify); the server is a long-running Node
+process (Render). Two settings decide whether the deployment behaves like the
+dev setup:
+
+- **`VITE_SERVER_URL`** is baked into the client at BUILD time, so it must be
+  set on the host that runs `npm run build:client` - changing it later means
+  rebuilding. Over HTTPS it has to be a `wss://` URL.
+- **`OBBY_DATA_DIR` must point at storage that survives a restart.** It
+  defaults to `data/` beside the server, which on a container host is part of
+  the image and is thrown away on every deploy and every cold start. Profiles
+  are the ONLY record of what players have earned, and the leaderboards rank
+  exactly that, so an ephemeral data directory means a server that begins with
+  nobody having earned anything - three empty boards - after each restart.
+  Mount a persistent disk and point `OBBY_DATA_DIR` at it. The line
+  `[ProfileStore] store="json-file" profiles=N` in the boot log is the check:
+  N is the population the boards can rank.
 
 ## Project structure
 
