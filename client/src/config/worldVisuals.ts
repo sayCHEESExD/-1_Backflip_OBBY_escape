@@ -96,6 +96,18 @@ export const AREA_THEMES: Readonly<Record<string, AreaTheme>> = {
   'Infinity Area': { deck: 0xff4df0, icon: '♾️', deckTexture: 'stars' },
   'Oblivion Area': { deck: 0x3a1030, icon: '🌘', deckTexture: 'stars' },
   'Eternity Area': { deck: 0xffd23d, icon: '👑', deckTexture: 'stars' },
+  // The second endgame run. Same starfield deck as the rest of deep space -
+  // only the colour and the icon separate them, exactly as above.
+  'Zenith Area': { deck: 0x7ce8ff, icon: '🔺', deckTexture: 'stars' },
+  'Abyss Area': { deck: 0x0b1b3a, icon: '🕳️', deckTexture: 'stars' },
+  'Radiance Area': { deck: 0xfff1a8, icon: '✨', deckTexture: 'stars' },
+  'Chronos Area': { deck: 0xb08adf, icon: '⏳', deckTexture: 'stars' },
+  'Elysium Area': { deck: 0x9dffcb, icon: '🕊️', deckTexture: 'stars' },
+  'Genesis Area': { deck: 0xff9a5c, icon: '🌱', deckTexture: 'stars' },
+  'Paragon Area': { deck: 0xe6e6ff, icon: '🏅', deckTexture: 'stars' },
+  'Empyrean Area': { deck: 0xff6bd6, icon: '🔥', deckTexture: 'stars' },
+  'Everlast Area': { deck: 0x4de0b0, icon: '💠', deckTexture: 'stars' },
+  'Apex Area': { deck: 0xffb300, icon: '🏆', deckTexture: 'stars' },
 };
 
 /** Fallback for an area with no theme entry. */

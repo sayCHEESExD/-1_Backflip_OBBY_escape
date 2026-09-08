@@ -212,6 +212,18 @@ export class LocalPlayer {
   /** Seconds the barrier has been up, against RESPAWN_ACK_TIMEOUT. */
   private respawnWait = 0;
 
+  /**
+   * Flips that BEGAN during the last update, for one sound each.
+   *
+   * Counted from `flipCount`, the simulation's own monotonic total, rather
+   * than from the jump button: `stepPlayer` only increments it when a flip was
+   * actually allowed, so a press with no flips left contributes nothing here
+   * and can never make a sound. The animator's `backflipRequested` edge is no
+   * use for this - it is ORed across a frame's substeps, so a chain that lands
+   * two flips in one frame would report one.
+   */
+  private flipsStarted = 0;
+
   private readonly animationInput: AnimationInput = createAnimationInput();
 
   constructor(collision: WorldCollision) {
@@ -250,6 +262,26 @@ export class LocalPlayer {
 
   get animationState(): PlayerAnimationState {
     return this.character.animationState;
+  }
+
+  /**
+   * How many flips began during the last update.
+   *
+   * Zero for a press the simulation refused, and one per flip in a chain even
+   * when several land in the same frame.
+   */
+  get flipsStartedThisFrame(): number {
+    return this.flipsStarted;
+  }
+
+  /**
+   * Flips performed in the CURRENT airborne window.
+   *
+   * The simulation's own chain counter, reset on landing - so it is the
+   * position of a flip within its chain, which is what the sound rises with.
+   */
+  get flipChainLength(): number {
+    return this.motion.flipsThisAirtime;
   }
 
   /** Flips the player may still perform before landing. */
@@ -530,6 +562,8 @@ export class LocalPlayer {
 
     // Frozen. No step, no input emitted, no gravity - the old state cannot
     // advance, and nothing the player presses can move a dead character.
+    this.flipsStarted = 0;
+
     if (this.deathTime >= 0) {
       this.deathTime += delta;
       this.applyDeathScale();
@@ -545,6 +579,7 @@ export class LocalPlayer {
 
     this.accumulator += Math.max(0, delta);
 
+    const flipCountBefore = this.motion.flipCount;
     let steps = 0;
     let jumpStarted = false;
     let landed = false;
@@ -595,6 +630,8 @@ export class LocalPlayer {
 
     // A long stall would otherwise leave a huge backlog to chew through.
     if (this.accumulator > FIXED_DT * MAX_STEPS_PER_FRAME) this.accumulator = 0;
+
+    this.flipsStarted = Math.max(0, this.motion.flipCount - flipCountBefore);
 
     this.events.jumpStarted = jumpStarted;
     this.events.landed = landed;

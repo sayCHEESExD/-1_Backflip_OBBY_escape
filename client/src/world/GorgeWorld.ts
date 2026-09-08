@@ -4,6 +4,7 @@ import { BootShop } from './BootShop.js';
 import { Foliage } from './Foliage.js';
 import { WorldCollision } from '@obby/shared';
 import { GorgeTerrain } from './GorgeTerrain.js';
+import { Leaderboards } from './Leaderboards.js';
 import { Redlines } from './Redlines.js';
 import { SpawnArea } from './SpawnArea.js';
 import { TreadmillArea } from './TreadmillArea.js';
@@ -32,6 +33,7 @@ export class GorgeWorld {
   private readonly redlines = new Redlines();
   private readonly foliage = new Foliage();
   readonly bootShop = new BootShop();
+  readonly leaderboards = new Leaderboards();
   readonly treadmills = new Treadmills();
   private readonly treadmillArea = new TreadmillArea();
   readonly winPads: WinPads;
@@ -47,6 +49,7 @@ export class GorgeWorld {
     this.root.add(this.redlines.root);
     this.root.add(this.foliage.root);
     this.root.add(this.bootShop.root);
+    this.root.add(this.leaderboards.root);
     this.root.add(this.treadmillArea.root);
     this.root.add(this.treadmills.root);
     this.root.add(this.winPads.root);
@@ -70,6 +73,7 @@ export class GorgeWorld {
     this.redlines.dispose();
     this.foliage.dispose();
     this.bootShop.dispose();
+    this.leaderboards.dispose();
     this.treadmills.dispose();
     this.treadmillArea.dispose();
     this.winPads.dispose();

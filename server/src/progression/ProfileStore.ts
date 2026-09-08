@@ -109,6 +109,17 @@ export class ProfileStore {
   }
 
   /** Number of profiles held, for diagnostics. */
+  /**
+   * Every profile the process holds, for ranking.
+   *
+   * Read-only on purpose: the leaderboard observes progression, it never
+   * writes it. Returning the live map avoids copying the whole population on
+   * every refresh; the caller only iterates.
+   */
+  get all(): ReadonlyMap<string, Profile> {
+    return this.profiles;
+  }
+
   get size(): number {
     return this.profiles.size;
   }

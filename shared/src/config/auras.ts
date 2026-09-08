@@ -11,6 +11,8 @@
  * path that pays a reward without passing those checks first.
  */
 
+import { MAX_WINS } from './progression.js';
+
 /** How the client draws an aura. Presentation only; never gameplay. */
 export type AuraStyle =
   | 'flame'
@@ -52,7 +54,24 @@ export const AURA_TIERS: readonly AuraTier[] = [
   { slot: 9, name: 'Dark Matter Aura', cost: 20000, multiplier: 4.5, color: 0x2a1a4d, accent: 0x9b6bff, style: 'darkmatter' },
   { slot: 10, name: 'Crimson', cost: 50000, multiplier: 5, color: 0xff1236, accent: 0x6b0212, style: 'crimson' },
   { slot: 11, name: 'The Last King', cost: 100000, multiplier: 5.5, color: 0xffd54a, accent: 0xa855f7, style: 'royal' },
+  // --- Late game. Prices step into the millions and then the billions, so the
+  // --- far islands' payouts have somewhere to go. Styles are reused from the
+  // --- list above with distinct colours: the renderers already know how to
+  // --- draw each of them, and a new style would mean a new branch in
+  // --- AuraEffect for no gameplay difference.
+  { slot: 12, name: 'Void Aura', cost: 2000000, multiplier: 6.5, color: 0x120a24, accent: 0x7b3bff, style: 'darkmatter' },
+  { slot: 13, name: 'Solar Aura', cost: 12000000, multiplier: 7.5, color: 0xffb01f, accent: 0xfff4c2, style: 'flame' },
+  { slot: 14, name: 'Phantom Aura', cost: 70000000, multiplier: 9, color: 0x8ff0ff, accent: 0xffffff, style: 'lightning' },
+  { slot: 15, name: 'Ascendant Aura', cost: 400000000, multiplier: 11, color: 0xff4fd0, accent: 0xffd6f4, style: 'sparkle' },
+  { slot: 16, name: 'Godlight Aura', cost: 1800000000, multiplier: 14, color: 0xfff7d1, accent: 0xffc733, style: 'royal' },
 ];
+
+/**
+ * Slots must fit `PlayerState.ownedAuras`, a uint16 bitmask - so sixteen, and
+ * no more. A seventeenth would set a bit that is not replicated and the tier
+ * would read as unowned however many times it was bought.
+ */
+export const MAX_AURA_SLOTS = 16;
 
 /** Nothing equipped. */
 export const NO_AURA = 0;
@@ -93,5 +112,9 @@ export const resolveTrophyReward = (
   ownedAuras: number,
 ): number => {
   const base = Number.isFinite(baseValue) ? Math.max(0, Math.floor(baseValue)) : 0;
-  return Math.floor(base * auraMultiplier(auraSlot, ownedAuras));
+  const paid = Math.floor(base * auraMultiplier(auraSlot, ownedAuras));
+  // Saturate rather than wrap. The far islands multiplied by a high aura
+  // already exceed what a uint32 wallet can hold, and a wrap there would read
+  // to the player as their Wins being wiped. Clamping is the honest failure.
+  return Math.min(paid, MAX_WINS);
 };

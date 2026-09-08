@@ -54,6 +54,14 @@ const resolvePlayerId = (): string => {
   return fresh;
 };
 
+/** The three boards, copied out of the replicated state. */
+export interface LeaderboardSnapshot {
+  readonly version: number;
+  readonly rebirths: readonly { name: string; value: number }[];
+  readonly totalSpeed: readonly { name: string; value: number }[];
+  readonly wins: readonly { name: string; value: number }[];
+}
+
 /** Everything the game needs to react to. Kept deliberately small. */
 export interface NetworkHandlers {
   onStatusChange?(status: ConnectionStatus, detail?: string): void;
@@ -89,6 +97,29 @@ export class NetworkClient {
 
   get connectionStatus(): ConnectionStatus {
     return this.status;
+  }
+
+  /**
+   * The replicated leaderboards, as plain data.
+   *
+   * Copied out rather than handing the room's schema objects to the rest of
+   * the client: colyseus.js stays inside this module, and the world layer gets
+   * something it can draw without knowing where it came from.
+   *
+   * Returns null until the first state arrives, and a `version` that only
+   * changes when the server actually reordered a board.
+   */
+  get leaderboards(): LeaderboardSnapshot | null {
+    const state = this.room?.state;
+    if (!state) return null;
+    const rows = (entries: { name: string; value: number }[] | undefined) =>
+      entries ? entries.map((e) => ({ name: e.name, value: e.value })) : [];
+    return {
+      version: state.leaderboardVersion,
+      rebirths: rows(state.topRebirths),
+      totalSpeed: rows(state.topSpeed),
+      wins: rows(state.topWins),
+    };
   }
 
   async connect(): Promise<void> {

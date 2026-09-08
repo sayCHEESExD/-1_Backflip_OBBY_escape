@@ -103,7 +103,7 @@ const AUTHORED_VALUES = [1, 3, 5, 10, 15, 25, 35, 45, 100, 200] as const;
  * twenty rows of numbers by hand, the curve the opening already follows is
  * simply continued.
  */
-const EXTENDED_ISLANDS = 20;
+const EXTENDED_ISLANDS = 30;
 
 /**
  * Growth per generated island.
@@ -114,7 +114,50 @@ const EXTENDED_ISLANDS = 20;
  * deep run is worth the trip.
  */
 const GAP_GROWTH = 1.15;
+
+/**
+ * Reward growth, as a curve rather than a constant.
+ *
+ * It STARTS at the authored tail's own 1.7 and eases toward a floor as the
+ * reward itself grows - value-driven, not index-driven, which is the whole
+ * trick: early rewards are small, so they keep the full 1.7 and come out
+ * bit-for-bit unchanged. Only once a payout is large does the growth relax,
+ * which is exactly where the wallet needs it to.
+ *
+ * The wallet is the constraint being solved. `PlayerState.wins` is a uint32,
+ * and at a flat 1.7 the last island paid 1.7e9 - which, multiplied by the top
+ * aura's x14, is 5.5x what the field can hold. The clamps added earlier stop
+ * that WRAPPING, but a reward that has to be clamped is a reward the player
+ * never receives. This curve keeps every payout inside the wallet on its own,
+ * so the clamps go back to being a safety net rather than the mechanism.
+ */
 const REWARD_GROWTH = 1.7;
+
+/** Growth the curve eases down to, so the late islands stay a real ladder. */
+const REWARD_GROWTH_FLOOR = 1.28;
+
+/**
+ * Reward at which growth sits halfway between the start and the floor.
+ *
+ * Sets where the taper bites: below it rewards grow as they always did, and
+ * islands 1-20 are untouched as a result.
+ */
+const REWARD_KNEE = 800000;
+
+/*
+ * Why GAP_GROWTH is high rather than low.
+ *
+ * Reach grows with REBIRTH (roughly x2.3 per rebirth, measured against the
+ * shared simulation); gaps grow per ISLAND. A gentle gap curve therefore lets
+ * one rebirth unlock a whole swathe at once - at 1.05 the first rebirth opens
+ * twenty-seven islands - while a steeper one spreads them out. At 1.15 the
+ * late game settles at one to three islands per rebirth, which is the pacing
+ * the authored opening promises.
+ *
+ * REWARD_GROWTH is a separate matter and is NOT safe to extend indefinitely:
+ * `wins` is replicated as a uint32, and at 1.7 the per-island reward passes
+ * 4.29e9 around island 41. That, not the terrain, is what caps the route.
+ */
 
 /** Round to two significant figures, so generated rewards read as round numbers. */
 const roundReward = (value: number): number => {
@@ -138,8 +181,28 @@ const extend = (
   return out;
 };
 
+/**
+ * Continue the reward curve with growth that eases as the value climbs.
+ *
+ * Separate from `extend` on purpose: gaps compound at a fixed rate because
+ * reach compounds too, and flattening them would let one rebirth swallow the
+ * whole route. Rewards are bounded by the wallet instead, which is a different
+ * problem and wants a different curve.
+ */
+const extendRewards = (authored: readonly number[], count: number): number[] => {
+  const out = [...authored];
+  for (let i = 0; i < count; i += 1) {
+    const previous = out[out.length - 1] ?? 1;
+    const growth =
+      REWARD_GROWTH_FLOOR +
+      (REWARD_GROWTH - REWARD_GROWTH_FLOOR) * (REWARD_KNEE / (REWARD_KNEE + previous));
+    out.push(roundReward(previous * growth));
+  }
+  return out;
+};
+
 const PLATFORM_GAPS = extend(AUTHORED_GAPS, EXTENDED_ISLANDS, GAP_GROWTH, Math.round);
-const TROPHY_VALUES = extend(AUTHORED_VALUES, EXTENDED_ISLANDS, REWARD_GROWTH, roundReward);
+const TROPHY_VALUES = extendRewards(AUTHORED_VALUES, EXTENDED_ISLANDS);
 
 /**
  * Themed name for each island, in run order. Shown floating above the island
@@ -178,6 +241,16 @@ const AREA_NAMES = [
   'Infinity Area',
   'Oblivion Area',
   'Eternity Area',
+  'Zenith Area',
+  'Abyss Area',
+  'Radiance Area',
+  'Chronos Area',
+  'Elysium Area',
+  'Genesis Area',
+  'Paragon Area',
+  'Empyrean Area',
+  'Everlast Area',
+  'Apex Area',
 ] as const;
 
 export type AreaName = (typeof AREA_NAMES)[number];
@@ -295,6 +368,16 @@ export const TROPHY_PLATFORMS: readonly TrophyPlatform[] = buildPlatforms();
 /** Z of the far edge of the last platform - where the route currently ends. */
 export const ROUTE_END_Z =
   (TROPHY_PLATFORMS[TROPHY_PLATFORMS.length - 1]?.centerZ ?? 0) + PLATFORM.length / 2;
+
+/**
+ * Far Z limit of the playable route: an invisible wall past the last island.
+ *
+ * DERIVED from the route, like `horizonZ`, so extending the island count moves
+ * it automatically. The margin is enough to land on the last island, turn
+ * round and jump without ever feeling it, while still stopping a player
+ * running out into the empty scenery that runs on to the horizon.
+ */
+export const ROUTE_BARRIER_Z = ROUTE_END_Z + 24;
 
 /** Look up a platform by its claim index. */
 export const platformByIndex = (index: number): TrophyPlatform | undefined =>

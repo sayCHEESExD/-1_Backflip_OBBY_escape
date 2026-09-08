@@ -40,7 +40,24 @@ export const TRAIL_TIERS: readonly TrailTier[] = [
   { slot: 8, name: 'Moon Trail', cost: 75000, multiplier: 7, color: 0xc9d8ff, style: 'lunar' },
   { slot: 9, name: 'Nova Trail', cost: 150000, multiplier: 8, color: 0x7b5bff, style: 'cosmic' },
   { slot: 10, name: 'Golden Trail', cost: 300000, multiplier: 10, color: 0xffc733, style: 'solid' },
+  // --- Late game. The multiplier is deliberately gentle compared with the
+  // --- price: a trail scales ACTUAL movement speed, which is already
+  // --- multiplied by level and rebirth, and a large step here would push a
+  // --- deep-rebirth player far enough per simulation step to clip the route.
+  // --- The prices are what absorb the Wins; the speed is a modest reward.
+  { slot: 11, name: 'Prism Trail', cost: 1500000, multiplier: 12, color: 0x5ce1ff, style: 'rainbow' },
+  { slot: 12, name: 'Aurora Trail', cost: 8000000, multiplier: 13, color: 0x62ffb8, style: 'cosmic' },
+  { slot: 13, name: 'Quantum Trail', cost: 45000000, multiplier: 14, color: 0xb26bff, style: 'cosmic' },
+  { slot: 14, name: 'Singularity Trail', cost: 250000000, multiplier: 15, color: 0x0a0a12, style: 'void' },
+  { slot: 15, name: 'Celestial Trail', cost: 900000000, multiplier: 16, color: 0xfff0b8, style: 'lunar' },
+  { slot: 16, name: 'Eternal Trail', cost: 2500000000, multiplier: 18, color: 0xffd23d, style: 'solid' },
 ];
+
+/**
+ * Slots must fit `PlayerState.ownedTrails`, a uint16 bitmask - so sixteen, and
+ * no more. See MAX_AURA_SLOTS.
+ */
+export const MAX_TRAIL_SLOTS = 16;
 
 /** Nothing equipped. */
 export const NO_TRAIL = 0;

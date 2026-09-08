@@ -1,5 +1,6 @@
 import {
   COLLECTION_ZONE,
+  MAX_WINS,
   collectionZoneX,
   collectionZoneZ,
   PLATFORM,
@@ -102,8 +103,15 @@ export class TrophyService {
     // The aura multiplies the payout - and only here, AFTER every check above
     // has passed. `resolveTrophyReward` returns the base value for an aura the
     // player does not own, so a forged slot pays exactly nothing extra.
-    const value = resolveTrophyReward(platform.value, player.auraSlot, player.ownedAuras);
-    player.wins += value;
+    const reward = resolveTrophyReward(platform.value, player.auraSlot, player.ownedAuras);
+    // Saturate at the wallet's ceiling. `wins` is replicated as a uint32, and
+    // the far islands pay enough that a full wallet plus one more collection
+    // would WRAP - which the player would read as their Wins being wiped. The
+    // value reported back is what was actually credited, so the HUD popup and
+    // the wallet can never disagree.
+    const before = player.wins;
+    player.wins = Math.min(before + reward, MAX_WINS);
+    const value = player.wins - before;
     return { ok: true, value, base: platform.value };
   }
 

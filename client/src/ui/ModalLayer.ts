@@ -1,3 +1,5 @@
+import { isTypingTarget } from '../config/menuKeys.js';
+
 /**
  * A panel that can be shown and hidden.
  *
@@ -67,6 +69,10 @@ class ModalLayer {
     this.listening = true;
     window.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape') return;
+      if (isTypingTarget(event.target)) return;
+      // With nothing open, Escape belongs to the BROWSER - it is how a player
+      // gets their cursor back out of pointer lock, and swallowing it would
+      // trap them in the game.
       if (!this.anyOpen) return;
       event.preventDefault();
       this.closeAll();

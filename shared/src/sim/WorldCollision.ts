@@ -12,6 +12,7 @@ import {
   PLAYER_RADIUS,
   REDLINE_RADIUS,
   REDLINES,
+  ROUTE_BARRIER_Z,
   SPAWN_PLATFORM,
   SPAWN_WALLS,
   TREADMILL_DECK_Y,
@@ -194,7 +195,13 @@ export class WorldCollision {
     }
 
     out.x = this.clampToChannel(x);
-    out.z = z;
+    // The end of the route. A CLAMP rather than a surface: it is applied after
+    // the step has already integrated, so no speed, jump arc or flip chain can
+    // carry a player through it the way a thin collider could be tunnelled.
+    // `clampToChannel` above has already pinned X to the corridor, so the
+    // barrier spans the full playable width and cannot be rounded at the
+    // sides. Nothing renders it, and there is nothing to break.
+    out.z = z > ROUTE_BARRIER_Z ? ROUTE_BARRIER_Z : z;
   }
 
   /**

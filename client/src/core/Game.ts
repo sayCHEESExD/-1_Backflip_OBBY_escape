@@ -13,6 +13,7 @@ import { RunController } from '../progression/RunController.js';
 import { ShopController } from '../progression/ShopController.js';
 import { LandingDebris } from '../rendering/LandingDebris.js';
 import { RendererManager } from '../rendering/RendererManager.js';
+import { WinCups } from '../rendering/WinCups.js';
 import { SceneManager } from '../rendering/SceneManager.js';
 import { DebugOverlay } from '../ui/DebugOverlay.js';
 import { ProgressHud } from '../ui/ProgressHud.js';
@@ -25,6 +26,7 @@ import {
 } from '@obby/shared';
 import { AudioControls } from '../ui/AudioControls.js';
 import { CosmeticShop } from '../ui/CosmeticShop.js';
+import { MENU_KEYS, isTypingTarget, menuKeyFor } from '../config/menuKeys.js';
 import { iconMarkup } from '../config/uiIcons.js';
 import { injectMobileStyles } from '../ui/mobileStyles.js';
 import { modalLayer } from '../ui/ModalLayer.js';
@@ -63,6 +65,8 @@ export class Game {
   private readonly audioControls: AudioControls;
   /** One pooled debris burst shared by every player in the room. */
   private readonly debris = new LandingDebris();
+  /** Pooled trophy burst, played when the server awards Wins. */
+  private readonly winCups = new WinCups();
   private readonly network: NetworkClient;
   private readonly world = new GorgeWorld();
   private readonly run: RunController;
@@ -76,6 +80,35 @@ export class Game {
 
   /** Last replicated Speed total, used to derive gain popups. */
   private lastTotalSpeed = -1;
+
+  /**
+   * Leaderboard revision already drawn.
+   *
+   * Redrawing three canvases is far too expensive to do per patch, and the
+   * boards move rarely - so the server bumps a counter when a row actually
+   * changes and this compares one integer per frame.
+   */
+  private lastLeaderboardVersion = -1;
+
+  /**
+   * Last replicated Wins total, used to spot an actual award.
+   *
+   * Wins are server-authoritative and only ever rise, so an INCREASE is the
+   * one honest signal that a reward happened. A patch that merely repeats the
+   * same total - and every patch carries it - changes nothing, which is what
+   * keeps the effect from firing twice for one collection. Remote players
+   * never reach here at all: this runs only for the local session.
+   */
+  private lastWins = -1;
+
+  /**
+   * An award waiting for the player to be back at spawn.
+   *
+   * The Wins patch usually lands while the death transition is still playing,
+   * and cups thrown around a character mid-squash at the pad they just left
+   * is not the moment being celebrated.
+   */
+  private winCelebrationPending = false;
 
   private overlayTimer = 0;
   private frameCount = 0;
@@ -102,6 +135,7 @@ export class Game {
       {
         title: 'Trails',
         icon: iconMarkup('trail'),
+        menuKey: menuKeyFor('trails')?.label ?? '',
         effect: 'Speed',
         buttonTop: 146,
         accent: '#d05bd8',
@@ -125,6 +159,7 @@ export class Game {
       {
         title: 'Aura',
         icon: iconMarkup('aura'),
+        menuKey: menuKeyFor('auras')?.label ?? '',
         effect: 'Wins',
         buttonTop: 222,
         accent: '#3aa8ff',
@@ -145,6 +180,7 @@ export class Game {
 
     this.audioControls = new AudioControls(container, this.audio, 298);
     this.sceneManager.scene.add(this.debris.mesh);
+    this.sceneManager.scene.add(this.winCups.mesh);
     // A remote landing is reconstructed from replicated `grounded` - it throws
     // rubble, but deliberately no sound: there is no spatial audio to place it
     // with, so every distant landing would read as one at the player's feet.
@@ -247,17 +283,36 @@ export class Game {
         this.audio.land();
         this.debris.burst(player.position.x, player.position.y, player.position.z);
       }
+
+      // One sound per flip that the SIMULATION started, so a chain climbs and
+      // a press with nothing left is silent.
+      const flips = player.flipsStartedThisFrame;
+      // flipChainLength counts the whole chain so far, so stepping back by
+      // the flips added this frame gives each one its own position in it.
+      const chainBefore = player.flipChainLength - flips;
+      for (let i = 0; i < flips; i += 1) this.audio.backflip(chainBefore + i);
+
+      // Held until the respawn has finished, so the cups land around the
+      // player at spawn rather than around a character mid-death.
+      if (this.winCelebrationPending && !player.isDying) {
+        this.winCelebrationPending = false;
+        this.audio.win();
+        this.winCups.burst(player.position.x, player.position.y, player.position.z);
+      }
     }
 
     if (player) {
       this.hud.setJumps(!player.isGrounded, player.flipsRemaining, player.flipCapacity);
     }
 
+    this.syncLeaderboards();
+
     this.world.bootShop.update(delta);
     this.world.treadmills.update(delta);
     this.world.winPads.update(delta);
     this.speedPopups.update(delta);
     this.debris.update(delta);
+    this.winCups.update(delta, this.camera.camera.quaternion);
     this.camera.update(delta);
     this.remotePlayers.update(delta);
 
@@ -267,12 +322,14 @@ export class Game {
   }
 
   start(): void {
+    window.addEventListener('keydown', this.onMenuKey);
     this.input.attach(this.renderer.renderer.domElement);
     // Audio waits for a real gesture; this only arms the listeners.
     this.audio.attach();
   }
 
   dispose(): void {
+    window.removeEventListener('keydown', this.onMenuKey);
     this.input.detach();
     this.remotePlayers.dispose();
     this.hud.dispose();
@@ -285,6 +342,7 @@ export class Game {
     this.audioControls.dispose();
     this.audio.dispose();
     this.debris.dispose();
+    this.winCups.dispose();
     this.world.dispose();
     void this.network.disconnect();
     this.renderer.dispose();
@@ -363,6 +421,51 @@ export class Game {
     this.snapCameraIfPlaced();
   }
 
+  /**
+   * Repaint the spawn scoreboards when the server says they moved.
+   *
+   * The rankings are global and server-authoritative; nothing here computes an
+   * order or trusts a local figure. Rows arrive already sorted and already cut
+   * to the top nine.
+   */
+  private syncLeaderboards(): void {
+    const snapshot = this.network.leaderboards;
+    if (!snapshot) return;
+    if (snapshot.version === this.lastLeaderboardVersion) return;
+    this.lastLeaderboardVersion = snapshot.version;
+
+    const boards = this.world.leaderboards;
+    boards.setRows('rebirths', snapshot.rebirths);
+    boards.setRows('totalSpeed', snapshot.totalSpeed);
+    boards.setRows('wins', snapshot.wins);
+  }
+
+  /**
+   * Open and close panels from the keyboard.
+   *
+   * The bindings live in `menuKeys`, so a key is declared once and the rail
+   * button that advertises it reads the same entry. Toggling routes through
+   * each panel's own `toggle`, which already goes through `ModalLayer` - so
+   * only one panel is ever up and the pointer lock follows automatically.
+   */
+  private readonly onMenuKey = (event: KeyboardEvent): void => {
+    if (event.repeat || isTypingTarget(event.target)) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+    const binding = MENU_KEYS.find((b) => b.code === event.code);
+    if (!binding) return;
+
+    const panel =
+      binding.id === 'rebirth'
+        ? this.rebirthPanel
+        : binding.id === 'trails'
+          ? this.trailShop
+          : this.auraShop;
+
+    event.preventDefault();
+    panel.toggle();
+  };
+
   private snapCameraIfPlaced(): void {
     const player = this.localPlayer;
     if (!player) return;
@@ -419,6 +522,13 @@ export class Game {
       this.speedPopups.add(player.totalSpeed - this.lastTotalSpeed);
     }
     this.lastTotalSpeed = player.totalSpeed;
+
+    // An award, not a repeat: the first sight of a player only takes the
+    // baseline, and equal totals do nothing.
+    if (this.lastWins >= 0 && player.wins > this.lastWins) {
+      this.winCelebrationPending = true;
+    }
+    this.lastWins = player.wins;
 
     this.progression.applyFromNetwork(player);
     this.winsCounter.update(player.wins);

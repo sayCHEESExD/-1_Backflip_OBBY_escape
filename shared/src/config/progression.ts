@@ -20,6 +20,18 @@ export interface ProgressionConfig {
   readonly treadmillProgressionPerSecond: number;
 }
 
+/**
+ * The largest Wins total that can be replicated.
+ *
+ * `PlayerState.wins` is a `uint32`, so anything past this WRAPS - a player
+ * would bank a huge reward and find their wallet had reset. Every path that
+ * adds Wins clamps to it instead, which saturates rather than corrupts.
+ *
+ * It is also the real ceiling on what any shop item may cost: a price above it
+ * could never be afforded, because the wallet cannot hold that much.
+ */
+export const MAX_WINS = 4294967295;
+
 export const PROGRESSION: ProgressionConfig = {
   baseProgressionPerStep: 1,
   baseLevelCap: 25,

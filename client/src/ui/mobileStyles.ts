@@ -71,8 +71,8 @@ export const injectMobileStyles = (): void => {
   /* Same proportions as desktop - roughly 78% of the tile - at mobile size. */
   body.obby-touch-mode .obby-rebirth-btn__icon,
   body.obby-touch-mode .obby-cos-btn__icon { font-size: 41px; }
-  body.obby-touch-mode .obby-rebirth-btn > span:last-child,
-  body.obby-touch-mode .obby-cos-btn > span:last-child { margin-top: -7px; }
+  body.obby-touch-mode .obby-rebirth-btn__label,
+  body.obby-touch-mode .obby-cos-btn__label { margin-top: -7px; }
 
   /* Desktop tops are 70 / 146 / 222 / 298 (step 76); mobile is 52 / 112 / 172 / 232. */
   body.obby-touch-mode .obby-rebirth-btn { top: calc(var(--obby-safe-t) + 52px); }
@@ -159,6 +159,8 @@ body.obby-touch-mode {
   touch-action: none;
   overscroll-behavior: none;
 }
+/* Keyboard shortcut badges mean nothing without a keyboard. */
+body.obby-touch-mode .obby-menu-key { display: none; }
 body.obby-touch-mode .obby-cos__list,
 body.obby-touch-mode .obby-rebirth__card {
   /* Panels are the ONE place a drag should scroll, and only along one axis. */

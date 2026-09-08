@@ -29,6 +29,8 @@ export interface CosmeticShopOptions {
   readonly effect: string;
   /** Distance from the top of the screen for the launcher button. */
   readonly buttonTop: number;
+  /** Keyboard shortcut shown on the rail button, e.g. "2". */
+  readonly menuKey?: string;
   /** Accent colour for the button. */
   readonly accent: string;
   readonly rows: readonly CosmeticRow[];
@@ -78,8 +80,12 @@ export class CosmeticShop {
     // every selector, so the mobile stylesheet could never restack the rail.
     this.button.style.setProperty('--obby-rail-top', `${options.buttonTop}px`);
     this.button.style.setProperty('--accent', options.accent);
+    const keyBadge = options.menuKey
+      ? `<span class="obby-menu-key">${options.menuKey}</span>`
+      : '';
     this.button.innerHTML =
-      `<span class="obby-cos-btn__icon">${options.icon}</span><span>${options.title}</span>`;
+      `<span class="obby-cos-btn__icon">${options.icon}</span>` +
+      `<span class="obby-cos-btn__label">${options.title}</span>${keyBadge}`;
     this.button.addEventListener('click', () => this.toggle());
     parent.appendChild(this.button);
 
@@ -291,11 +297,36 @@ const injectStyles = (): void => {
 }
 .obby-cos-btn__icon { font-size: calc(52px * var(--obby-ui-scale, 1)); line-height: 1; }
 /*
+ * The shortcut badge, pinned to the tile's corner.
+ *
+ * Shared by every rail button - the rebirth panel injects its own styles, so
+ * whichever loads first defines it and the rule is identical either way.
+ */
+.obby-menu-key {
+  position: absolute;
+  top: calc(3px * var(--obby-ui-scale, 1));
+  right: calc(4px * var(--obby-ui-scale, 1));
+  min-width: calc(15px * var(--obby-ui-scale, 1));
+  padding: 0 calc(3px * var(--obby-ui-scale, 1));
+  border-radius: calc(5px * var(--obby-ui-scale, 1));
+  background: rgba(10, 16, 28, 0.72);
+  color: #ffffff;
+  font: 900 calc(11px * var(--obby-ui-scale, 1))/calc(16px * var(--obby-ui-scale, 1))
+    system-ui, "Segoe UI", Roboto, sans-serif;
+  text-align: center;
+  pointer-events: none;
+}
+/*
  * The label sits OVER the bottom of the artwork rather than under it. At this
  * icon size a stacked layout would not fit the tile, and the reference art has
  * the two overlapping anyway.
+ *
+ * Matched by its own CLASS, never by position. This was a last-child rule, and
+ * adding the shortcut badge after the label silently handed the rule to the
+ * badge - which is absolutely positioned, so the offset vanished and the label
+ * dropped onto the tile's bottom edge.
  */
-.obby-cos-btn > span:last-child { margin-top: calc(-9px * var(--obby-ui-scale, 1)); }
+.obby-cos-btn__label { margin-top: calc(-9px * var(--obby-ui-scale, 1)); }
 /*
  * Custom icon art. Sized in em units so one image tracks whatever text it
  * sits with - 27px in the rail tile, 21px on mobile, 29px in the modal title

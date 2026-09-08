@@ -9,9 +9,10 @@
  * onto its pedestal in the Win Shop while holding enough Wins. Reaching the
  * Wins total alone does nothing - the player chooses when to collect.
  *
- * Wins are never deducted. The requirement is a threshold to clear, not a
- * price to pay, which is why several boots can read OWNED at once and why
- * walking over a pedestal you already qualify for is always safe.
+ * Wins ARE deducted: `winsRequired` is the price, taken by `BootService`
+ * through the one wallet when the player steps onto the pedestal holding
+ * enough. Walking over a pedestal already owned is still always safe - the
+ * service refuses a second purchase rather than charging twice.
  *
  * The server owns all of this: `BootService` records what has been bought and
  * equips the best of it. The client only renders the result.
@@ -40,7 +41,21 @@ export const BOOT_TIERS: readonly BootTier[] = [
   { slot: 5, name: 'Magma Boots', speedPerStep: 6, winsRequired: 250, color: 0xe23b3b },
   { slot: 6, name: 'Storm Boots', speedPerStep: 8, winsRequired: 500, color: 0x3ecf6a },
   { slot: 7, name: 'Mythic Boots', speedPerStep: 15, winsRequired: 1500, color: 0xa855f7 },
+  // --- Late game. Boots multiply progression PER STEP, which is the axis a
+  // --- deep player actually wants, so these are the most useful sink of the
+  // --- three. Only two are added: every tier is a physical pedestal along the
+  // --- Win Shop wall, and at the existing spacing a ninth already sits at
+  // --- z +22 against the platform's +28 front edge. More would need the shop
+  // --- re-laid out, which is a world change rather than an economy one.
+  { slot: 8, name: 'Celestial Boots', speedPerStep: 26, winsRequired: 250000, color: 0x5ce1ff },
+  { slot: 9, name: 'Ascendant Boots', speedPerStep: 45, winsRequired: 4000000, color: 0xfff0b8 },
 ];
+
+/**
+ * Slots must fit `PlayerState.ownedBoots`, a uint16 bitmask - so sixteen, and
+ * no more. The physical shop runs out of wall long before that.
+ */
+export const MAX_BOOT_SLOTS = 16;
 
 /** The starter boot, always owned. */
 export const STARTER_BOOT: BootTier = BOOT_TIERS[0] as BootTier;

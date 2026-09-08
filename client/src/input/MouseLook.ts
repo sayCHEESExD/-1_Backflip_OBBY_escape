@@ -13,18 +13,22 @@ const MAX_PITCH = 1.15;
  * movement input by the yaw, so looking around never moves the character and
  * moving never turns the camera.
  *
- * Pointer lock is a TOGGLE on the canvas, and the canvas alone:
+ * Pointer lock follows the PANEL state, not clicks:
  *
- *   click the game  -> cursor hidden, mouse steers the camera
- *   click again, or press Escape -> cursor back, mouse steers nothing
- *   click the game  -> hidden again
+ *   gameplay        -> cursor hidden, mouse steers the camera
+ *   a panel opens   -> lock released, cursor free for its buttons
+ *   the panel closes-> lock retaken, camera resumes at once
+ *   Escape          -> the browser releases; a click on the world resumes
  *
- * Nothing re-locks on its own. That is the point: the cursor is the only way
- * to use the shops, so taking it back without being asked - on a keypress, on
- * a panel closing, on the tab regaining focus - fights the player the moment
- * they want to click something. The UI panels are DOM above the canvas, so a
- * click on a button or a backdrop never reaches this listener and can never
- * re-lock by accident.
+ * The lock is taken on the player's FIRST gesture rather than waiting for a
+ * deliberate click on the world. A browser will not grant it without one, so
+ * "automatic" can only mean "on the first thing the player does" - and since a
+ * keypress counts, pressing W to walk is enough. There is no click-to-play
+ * step.
+ *
+ * Shops are opened by key, not by clicking the world, so nothing here needs to
+ * distinguish a click on a panel from a click on the game: while a panel is up
+ * this source is suppressed outright.
  *
  * Touch look goes through the SAME accumulator via `addLookDelta`, so the
  * pitch limits, the yaw wrap and the suppression rule exist once and cannot
@@ -51,6 +55,15 @@ export class MouseLook {
    */
   private lockEverGranted = false;
 
+  /**
+   * Whether the player has done anything yet.
+   *
+   * A page cannot lock the pointer before its first user gesture, so this
+   * records that the gesture has happened and the lock may be taken - and
+   * retaken - from then on.
+   */
+  private armed = false;
+
   get yaw(): number {
     return this.yawValue;
   }
@@ -70,6 +83,7 @@ export class MouseLook {
     window.addEventListener('mouseup', this.onMouseUp);
     window.addEventListener('mousemove', this.onMouseMove);
     window.addEventListener('blur', this.onBlur);
+    window.addEventListener('keydown', this.onFirstGesture);
     document.addEventListener('pointerlockchange', this.onLockChange);
   }
 
@@ -78,6 +92,7 @@ export class MouseLook {
     window.removeEventListener('mouseup', this.onMouseUp);
     window.removeEventListener('mousemove', this.onMouseMove);
     window.removeEventListener('blur', this.onBlur);
+    window.removeEventListener('keydown', this.onFirstGesture);
     document.removeEventListener('pointerlockchange', this.onLockChange);
     this.canvas = null;
   }
@@ -92,8 +107,36 @@ export class MouseLook {
    * world resumes play.
    */
   setSuppressed(suppressed: boolean): void {
+    const wasSuppressed = this.suppressed;
     this.suppressed = suppressed;
-    if (!suppressed) return;
+
+    if (suppressed) {
+      this.dragging = false;
+      if (this.locked) document.exitPointerLock();
+      return;
+    }
+
+    // The panel closed. Take the lock straight back so the camera resumes
+    // without the player having to click the world first - closing a menu IS
+    // the request to go back to playing.
+    if (wasSuppressed && this.armed) this.requestLock();
+  }
+
+  /**
+   * Arm the lock and take it as soon as the browser allows.
+   *
+   * Called from the first real user gesture. Kept separate from the gesture
+   * handlers so an embedding host - a portal SDK owning its own menu and
+   * pointer-lock lifecycle - has one method to drive instead of having to
+   * synthesise clicks.
+   */
+  engage(): void {
+    this.armed = true;
+    if (!this.suppressed) this.requestLock();
+  }
+
+  /** Release the lock and stop looking, without suppressing the source. */
+  release(): void {
     this.dragging = false;
     if (this.locked) document.exitPointerLock();
   }
@@ -106,14 +149,25 @@ export class MouseLook {
    * the event before it arrives. That is what keeps a click on a shop from
    * grabbing the cursor the player is using to click it.
    */
+  /**
+   * Any keypress is a user gesture, and the first one arms the lock.
+   *
+   * This is what removes the click-to-play step: the player presses W to walk
+   * and the cursor disappears on the same keystroke. Escape is excluded - it
+   * is how the player asks to be LET OUT, so it must never be the thing that
+   * puts them back in.
+   */
+  private readonly onFirstGesture = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape') return;
+    if (this.armed) return;
+    this.engage();
+  };
+
+  /** A click on the world resumes play after Escape released the lock. */
   private readonly onMouseDown = (event: MouseEvent): void => {
     if (this.suppressed || event.button !== 0) return;
-
-    if (this.locked) {
-      // Second click: hand the cursor back for the UI.
-      document.exitPointerLock();
-      return;
-    }
+    this.armed = true;
+    if (this.locked) return;
 
     // Only where the lock is refused outright does holding the button steer;
     // see `lockEverGranted`.

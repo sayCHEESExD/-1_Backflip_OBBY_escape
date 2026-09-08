@@ -1,4 +1,5 @@
 import { Client, Room } from '@colyseus/core';
+import type { ArraySchema } from '@colyseus/schema';
 import {
   DEATH_PLANE_Y,
   MessageType,
@@ -23,19 +24,28 @@ import { BootService } from '../progression/BootService.js';
 import { CosmeticService } from '../progression/CosmeticService.js';
 import { AURA_BINDING, TRAIL_BINDING } from '../progression/cosmeticBindings.js';
 import { profileStore } from '../progression/ProfileStore.js';
+import { LeaderboardService } from '../progression/LeaderboardService.js';
 import { ProgressionService } from '../progression/ProgressionService.js';
 import { RebirthService } from '../progression/RebirthService.js';
 import { SpeedService } from '../progression/SpeedService.js';
 import { TreadmillService } from '../progression/TreadmillService.js';
 import { TrophyService } from '../progression/TrophyService.js';
 import { logger } from '../util/logger.js';
-import { GorgeState } from './state/GorgeState.js';
+import { GorgeState, LeaderboardEntry } from './state/GorgeState.js';
 import { PlayerState } from './state/PlayerState.js';
 
 const SCOPE = 'GorgeRoom';
 
-/** Maximum concurrent players in one gorge instance. */
-const MAX_CLIENTS = 24;
+/**
+ * Maximum concurrent players in one gorge instance.
+ *
+ * Colyseus enforces this itself: the room LOCKS the moment it fills, so the
+ * matchmaker stops offering it and `joinOrCreate` gives the next player a new
+ * one. There is deliberately nothing here that counts players or picks rooms -
+ * a hand-rolled matchmaker would be a second source of truth for something the
+ * framework already owns, and the two would eventually disagree.
+ */
+const MAX_CLIENTS = 15;
 
 /**
  * Seconds between background saves of every connected player.
@@ -45,6 +55,17 @@ const MAX_CLIENTS = 24;
  * an unclean shutdown would otherwise lose the farming since the last level.
  */
 const AUTOSAVE_SECONDS = 15;
+
+/**
+ * Seconds between leaderboard rebuilds.
+ *
+ * Slow on purpose. The boards rank persisted progression, which only moves
+ * when a profile is saved - on a level, a trophy, a purchase, a rebirth, or
+ * the 15s autosave - so refreshing faster would re-sort the same numbers and
+ * push patches nobody can see. Colyseus only sends rows that actually
+ * changed, so a quiet server costs nothing at all.
+ */
+const LEADERBOARD_SECONDS = 5;
 
 
 const isFiniteNumber = (value: unknown): value is number =>
@@ -66,12 +87,16 @@ export class GorgeRoom extends Room<GorgeState> {
   private readonly trails = new CosmeticService(TRAIL_BINDING);
   private readonly auras = new CosmeticService(AURA_BINDING);
   private readonly rebirths = new RebirthService();
+  /** Global rankings, read from the process-wide profile store. */
+  private readonly leaderboards = new LeaderboardService();
   /** Shared across rooms - a room dies with its last client, profiles must not. */
   private readonly profiles = profileStore;
   /** Stable client id per session, used to restore progression on reconnect. */
   private readonly playerIds = new Map<string, string>();
   /** Seconds since the last background save of every connected player. */
   private autosaveTimer = 0;
+  /** Seconds since the boards were last rebuilt. */
+  private leaderboardTimer = 0;
 
   override onCreate(): void {
     this.state = new GorgeState();
@@ -112,6 +137,9 @@ export class GorgeRoom extends Room<GorgeState> {
     this.onMessage(MessageType.EquipAura, (client, message: EquipAuraMessage) => {
       this.handleEquipCosmetic(client, this.auras, message?.slot);
     });
+
+    // Populate the boards before the first player can look at them.
+    this.refreshLeaderboards();
 
     this.setSimulationInterval((deltaMs) => this.update(deltaMs), serverConfig.patchRateMs);
 
@@ -463,12 +491,70 @@ export class GorgeRoom extends Room<GorgeState> {
       this.state.players.forEach((player, sessionId) => this.persist(sessionId, player));
     }
 
+    this.leaderboardTimer += deltaMs / 1000;
+    if (this.leaderboardTimer >= LEADERBOARD_SECONDS) {
+      this.leaderboardTimer = 0;
+      this.refreshLeaderboards();
+    }
+
     // The blue gorge floor is a death zone: falling respawns at spawn.
     // The server owns this decision even while movement is client-reported.
     this.state.players.forEach((player, sessionId) => {
       if (player.y > DEATH_PLANE_Y) return;
       this.respawn(sessionId, player, 'fell');
     });
+  }
+
+  /**
+   * Rebuild the three boards from the global profile store.
+   *
+   * Rows are only rewritten when they actually differ, so an unchanged board
+   * produces no patch at all - which is what keeps a slow-moving scoreboard
+   * off the wire entirely.
+   */
+  private refreshLeaderboards(): void {
+    const ranked = this.leaderboards.build(this.profiles.all);
+    let changed = false;
+    changed = this.applyBoard(this.state.topRebirths, ranked.get('rebirths')) || changed;
+    changed = this.applyBoard(this.state.topSpeed, ranked.get('totalSpeed')) || changed;
+    changed = this.applyBoard(this.state.topWins, ranked.get('wins')) || changed;
+    if (changed) this.state.leaderboardVersion += 1;
+  }
+
+  /** Copy ranked rows into a replicated array. @returns true if anything moved. */
+  private applyBoard(
+    target: ArraySchema<LeaderboardEntry>,
+    rows: readonly { name: string; value: number }[] | undefined,
+  ): boolean {
+    const next = rows ?? [];
+    let changed = target.length !== next.length;
+
+    for (let i = 0; i < next.length; i += 1) {
+      const row = next[i] as { name: string; value: number };
+      const existing = target[i];
+      if (!existing) {
+        const entry = new LeaderboardEntry();
+        entry.name = row.name;
+        entry.value = row.value;
+        target.push(entry);
+        changed = true;
+        continue;
+      }
+      if (existing.name !== row.name) {
+        existing.name = row.name;
+        changed = true;
+      }
+      if (existing.value !== row.value) {
+        existing.value = row.value;
+        changed = true;
+      }
+    }
+
+    while (target.length > next.length) {
+      target.pop();
+      changed = true;
+    }
+    return changed;
   }
 
   private respawn(sessionId: string, player: PlayerState, reason: RespawnReason): void {

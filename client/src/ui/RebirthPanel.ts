@@ -1,5 +1,6 @@
 import { maxLevelForRebirth, rebirthMultiplier } from '@obby/shared';
 import { iconMarkup } from '../config/uiIcons.js';
+import { menuKeyFor } from '../config/menuKeys.js';
 import { modalLayer } from './ModalLayer.js';
 
 /** What the panel needs to render, all replicated from the server. */
@@ -39,7 +40,9 @@ export class RebirthPanel {
     this.button.className = 'obby-rebirth-btn';
     this.button.type = 'button';
     this.button.innerHTML =
-      `<span class="obby-rebirth-btn__icon">${iconMarkup('rebirth')}</span><span>Rebirth</span>`;
+      `<span class="obby-rebirth-btn__icon">${iconMarkup('rebirth')}</span>` +
+      `<span class="obby-rebirth-btn__label">Rebirth</span>` +
+      `<span class="obby-menu-key">${menuKeyFor('rebirth')?.label ?? ''}</span>`;
     this.button.addEventListener('click', () => this.toggle());
     parent.appendChild(this.button);
 
@@ -217,7 +220,7 @@ const injectStyles = (): void => {
   box-shadow: 0 4px 0 rgba(0, 0, 0, 0.45);
 }
 .obby-rebirth-btn__icon { font-size: calc(52px * var(--obby-ui-scale, 1)); line-height: 1; }
-.obby-rebirth-btn > span:last-child { margin-top: calc(-9px * var(--obby-ui-scale, 1)); }
+.obby-rebirth-btn__label { margin-top: calc(-9px * var(--obby-ui-scale, 1)); }
 .obby-rebirth-btn:hover { filter: brightness(1.1); }
 .obby-rebirth-btn:active { transform: translateY(3px); box-shadow: none; }
 .obby-rebirth-btn--ready { animation: obby-rebirth-ready 1.4s ease-in-out infinite; }

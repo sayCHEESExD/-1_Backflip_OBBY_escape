@@ -101,6 +101,21 @@ export class AudioEngine {
     this.sfx?.land();
   }
 
+  /**
+   * A backflip just STARTED - one call per flip.
+   *
+   * The caller is expected to have counted actual flips rather than button
+   * presses, so a flip the simulation refused never reaches here.
+   */
+  backflip(chainIndex = 0): void {
+    this.sfx?.backflip(chainIndex);
+  }
+
+  /** Wins were awarded by the server. One call per award. */
+  win(): void {
+    this.sfx?.win();
+  }
+
   dispose(): void {
     this.detach();
     this.music?.dispose();

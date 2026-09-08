@@ -1,5 +1,5 @@
 import type { PlayerAnimationState, PlayerMotionState } from '@obby/shared';
-import type { MapSchema } from '@colyseus/schema';
+import type { ArraySchema, MapSchema } from '@colyseus/schema';
 
 /**
  * Client-side TYPE mirror of the server's Colyseus schema.
@@ -61,9 +61,21 @@ export interface NetPlayerState extends PlayerMotionState {
   ready: boolean;
 }
 
+/** One replicated leaderboard row. Server-written; never sent by a client. */
+export interface NetLeaderboardEntry {
+  name: string;
+  value: number;
+}
+
 export interface NetGorgeState {
   players: MapSchema<NetPlayerState>;
   elapsed: number;
+  /** Global rankings, at most nine rows each. */
+  topRebirths: ArraySchema<NetLeaderboardEntry>;
+  topSpeed: ArraySchema<NetLeaderboardEntry>;
+  topWins: ArraySchema<NetLeaderboardEntry>;
+  /** Bumped by the server whenever a board actually changes. */
+  leaderboardVersion: number;
 }
 
 /** Connection lifecycle, surfaced to the UI. */
