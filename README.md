@@ -83,11 +83,44 @@ settings and Bux. Two things need configuring outside the code:
   and `VITE_BLOXITY_API_URL=https://api.bloxity.io` to reach the real portal.
   Leave both unset in production - the SDK's own defaults are correct there.
 
-### Deploying
+### Deploying to Bloxity Hosting
 
-The client is a static build (Netlify); the server is a long-running Node
-process (Render). Two settings decide whether the deployment behaves like the
-dev setup:
+`.github/workflows/deploy.yml` deploys both halves of one commit, and the
+branch picks the channel:
+
+| Branch | Channel | Backend |
+| ------ | ------- | ------- |
+| `dev`  | `dev`   | `wss://speed-backflip-escape.dev.host.bloxity.io` |
+| `main` | `prod`  | `wss://speed-backflip-escape.host.bloxity.io` |
+
+The server is built by the root `Dockerfile`, pushed to GHCR tagged with the
+commit SHA, and deployed to the channel; the client is then built with that
+channel's `VITE_SERVER_URL`, zipped with `index.html` at the archive root and
+uploaded. The SERVER GOES FIRST on purpose - the Colyseus schema is shared, so
+a client that ships ahead of its server speaks a protocol the server does not
+have yet.
+
+Required once, in **Settings > Secrets and variables > Actions**:
+
+- **`LEGION_DEPLOY_TOKEN`** (secret). Never committed; the workflow reads it
+  from `secrets` and passes it to `curl` through the environment so it cannot
+  appear in a rendered command line.
+
+Still to fill in: the two `BLOXITY_*_URL` values at the top of the workflow.
+They are blank because Bloxity's hosting API is documented behind the developer
+login at <https://dev.bloxity.io/hosting/docs> and is not public - a guessed
+route would POST a build somewhere that may not exist. The `preflight` job
+fails with instructions until both are set.
+
+`OBBY_DATA_DIR` matters here too, for the reason below: a container filesystem
+is ephemeral, so without a mounted volume every deploy starts with no profiles.
+
+### Deploying elsewhere
+
+The client is also configured as a static build (Netlify, `netlify.toml`) and
+the server as a long-running Node process (Render). Those remain valid and
+independent of the Bloxity workflow. Two settings decide whether either
+deployment behaves like the dev setup:
 
 - **`VITE_SERVER_URL`** is baked into the client at BUILD time, so it must be
   set on the host that runs `npm run build:client` - changing it later means
