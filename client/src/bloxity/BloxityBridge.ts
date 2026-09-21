@@ -179,7 +179,9 @@ export class BloxityBridge {
       bloxity.onUserChanged((user: LegionUser | null) => {
         logger.info(
           SCOPE,
-          user ? `signed in as "${visibleName(user)}"` : 'signed out (playing as guest)',
+          user
+            ? `signed in as "${visibleName(user)}" (displayName ${user.displayName ? 'set' : 'absent'}, username ${user.username ? 'set' : 'absent'})`
+            : 'signed out (playing as guest)',
         );
         // Identity decides the avatar, the friends list and the balance, so
         // they are all refreshed from this one place rather than separately.

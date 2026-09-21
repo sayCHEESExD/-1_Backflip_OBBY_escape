@@ -508,7 +508,12 @@ api.bloxity.io) - there is one code path, never a branch on environment.
 - A signed-in account's `pfp` is a PATH (`/pfps/s0.png`); `resolvePfpUrl`
   turns it into the CDN URL exactly as the SDK's `pfpUrlFromPath` does. Only
   guest pictures arrive as URLs.
-- **A player is their Bloxity DISPLAY NAME, everywhere it is shown** - the
+- **A player's shown name is Bloxity's own rule: `displayName || username`**
+  (`visibleName` in `BloxitySdk.ts`), never with a leading `@` and never an
+  internal or account id. The SDK's documented label for a player is
+  `username`, and an account need not have a `displayName`; requiring one left
+  those players nameless - no plate and "Player" on every board.
+- **A player is their Bloxity name, everywhere it is shown** - the
   plate over their head, all three boards, the panel. Never an `@handle`,
   never the session id, and never the internal `playerId`. The boards used to
   derive a label from that id, which is why `leaderboardName` no longer

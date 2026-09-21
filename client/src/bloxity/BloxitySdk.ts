@@ -408,13 +408,18 @@ class BloxitySdkFacade {
 export const bloxity = new BloxitySdkFacade();
 
 /**
- * The ONLY name a player is ever shown as: their Bloxity display name.
+ * The name a player is shown as - Bloxity's own rule, exactly.
  *
- * Never the `username` handle (`@username-1234`) and never an internal id -
- * an account with no display name set gets an empty string, and every caller
- * treats empty as "no label" rather than reaching for the handle. A stray
- * leading `@` is dropped so a handle pasted into a display name cannot read
- * as one.
+ * Every place the Bloxity SDK shows a person it uses `displayName || username`,
+ * and its documented way to label the current player is `username`: an
+ * account is NOT guaranteed to carry a `displayName`. Requiring one left every
+ * signed-in account without it nameless - no plate overhead and "Player" on
+ * the scoreboards. So: the display name when there is one, otherwise the
+ * username, never with a leading `@`, and never an internal or account id.
  */
-export const visibleName = (person: { readonly displayName?: string | null } | null | undefined): string =>
-  (person?.displayName ?? '').trim().replace(/^@+/, '').trim();
+export const visibleName = (
+  person: { readonly displayName?: string | null; readonly username?: string | null } | null | undefined,
+): string => {
+  const clean = (value: string | null | undefined): string => (value ?? '').trim().replace(/^@+/, '').trim();
+  return clean(person?.displayName) || clean(person?.username);
+};
