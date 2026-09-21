@@ -3,7 +3,13 @@ import { AvatarAppearance } from './AvatarAppearance.js';
 import { encodeAvatarLook, type AvatarLook } from '@obby/shared';
 import { bloxity, visibleName } from './BloxitySdk.js';
 import { BloxityPanel, type RoomPlayer } from './BloxityPanel.js';
-import { SETTING_KEYS, resolvePfpUrl, settingBool, settingNumber } from './bloxityConfig.js';
+import {
+  SETTING_KEYS,
+  avatarPfpUrl,
+  resolvePfpUrl,
+  settingBool,
+  settingNumber,
+} from './bloxityConfig.js';
 import type { LegionUser, Unsubscribe } from './sdkTypes.js';
 
 const SCOPE = 'BloxityBridge';
@@ -142,6 +148,10 @@ export class BloxityBridge {
    * everybody rather than only for signed-in players.
    */
   get playerPfp(): string {
+    // Rendered from the avatar actually being worn, so it follows every
+    // change the player makes. Without the SDK there is no avatar to render,
+    // and the stored picture (if any) is the best there is.
+    if (bloxity.available) return avatarPfpUrl(this.avatarLook);
     const user = bloxity.getUser();
     if (user?.pfp) return resolvePfpUrl(user.pfp);
     return resolvePfpUrl(bloxity.getGuest()?.pfp ?? '');
@@ -331,6 +341,9 @@ export class BloxityBridge {
   private applyAvatar(): void {
     const look = this.avatarLook;
     this.host.setAvatarLook(encodeAvatarLook(look));
+    // The picture on the scoreboards is a render of this look, so a changed
+    // avatar is a changed picture. The network layer drops no-op updates.
+    this.host.updateIdentity(this.playerName, this.playerUserId, this.playerPfp);
     const character = this.host.getCharacterForAvatar();
     if (!character) return;
     this.avatar ??= new AvatarAppearance(character);

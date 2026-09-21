@@ -9,7 +9,9 @@
 import {
   DEFAULT_AVATAR_PROPORTIONS,
   clampAvatarProportions,
+  AVATAR_PROPORTION_KEYS,
   isAvatarIdSet,
+  type AvatarLook,
   type AvatarPartSlot,
 } from '@obby/shared';
 import type { LegionProportions } from './sdkTypes.js';
@@ -55,6 +57,43 @@ export const resolvePfpUrl = (pfp: string): string => {
   if (/^https?:\/\//i.test(pfp)) return pfp;
   const path = pfp.startsWith('/') ? pfp.slice(1) : pfp;
   return `https://static.bloxity.io/img/${path}?width=128&quality=85&v=2`;
+};
+
+/** The SDK's `encodeFloatForUrl`: 1 -> "1f0", 1.25 -> "1f25". */
+const encodeFloat = (value: number): string => {
+  const text = parseFloat(value.toFixed(4)).toString();
+  return text.includes('.') ? text.replace('.', 'f') : `${text}f0`;
+};
+
+/**
+ * The profile picture of a LOOK - Bloxity's render of exactly this avatar.
+ *
+ * Mirrors the SDK's `getAvatarPfpPath` (itself a copy of the portal's
+ * `cdn.ts`, which the renderer parses, so the key format must match exactly)
+ * and `pfpUrlFromPath`. The CDN renders any combination on demand, so the
+ * picture on the scoreboards is always the avatar the player is wearing NOW -
+ * a stored `pfp` field only changes when the account is re-read, which is why
+ * the boards kept showing an old picture after the avatar changed.
+ */
+export const avatarPfpUrl = (look: AvatarLook): string => {
+  const id = (value: string, fallback: string): string => value || fallback;
+  let key = `s${id(look.skin, '0')}`;
+  if (look.hat) key += `_h${look.hat}`;
+  if (look.back) key += `_b${look.back}`;
+  const hd = id(look.parts.head, '0');
+  const aL = id(look.parts.armL, '0');
+  const aR = id(look.parts.armR, '0');
+  const lL = id(look.parts.legL, '0');
+  const lR = id(look.parts.legR, '0');
+  const to = id(look.parts.torso, '0');
+  const values = AVATAR_PROPORTION_KEYS.map((name) => look.proportions[name]);
+  const customParts = [hd, aL, aR, lL, lR, to].some((part) => part !== '0');
+  const customShape = values.some((value) => Math.abs(value - 1) > 0.0001);
+  if (customParts || customShape) {
+    key += `_hd${hd}_aL${aL}_aR${aR}_lL${lL}_lR${lR}_to${to}`;
+    key += `_p${values.map(encodeFloat).join('-')}`;
+  }
+  return resolvePfpUrl(`/pfps/${key}.png`);
 };
 
 /** Body-part file per slot under `/parts`, `{id}` filled in by `partMesh`. */

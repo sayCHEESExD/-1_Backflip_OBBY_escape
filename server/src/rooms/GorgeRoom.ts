@@ -89,7 +89,9 @@ const LEGION_ASSET_HOST = /(^|\.)bloxity\.io$/i;
  * is in the room. Only https on Bloxity's own hosts gets through.
  */
 const cleanLegionPfp = (raw: unknown): string => {
-  if (typeof raw !== 'string' || raw.length === 0 || raw.length > 300) return '';
+  // A render key names every equipped part and proportion, so a fully
+  // customised avatar's picture URL runs past 300 characters.
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > 600) return '';
   try {
     const url = new URL(raw);
     if (url.protocol !== 'https:') return '';

@@ -95,5 +95,5 @@ export const sanitiseProfile = (raw: Partial<Record<keyof StoredProfile, unknown
   ownedAuras: Math.max(0, Math.floor(finite(raw?.ownedAuras, 0))),
   auraSlot: Math.max(0, Math.floor(finite(raw?.auraSlot, 0))),
   legionName: typeof raw?.legionName === 'string' ? raw.legionName.slice(0, 32) : '',
-  legionPfp: typeof raw?.legionPfp === 'string' ? raw.legionPfp.slice(0, 300) : '',
+  legionPfp: typeof raw?.legionPfp === 'string' ? raw.legionPfp.slice(0, 600) : '',
 });

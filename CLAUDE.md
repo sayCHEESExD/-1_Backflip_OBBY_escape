@@ -160,6 +160,11 @@ engine. Do not add a framework or a build tool without a concrete need.
   to the terminals, the body mesh to the real joints. `PlayerRig` binds the
   **first** bone of each name (traversal visits a parent before its child), which
   drives both meshes. Binding the terminals animates the arms only.
+- Background music is `assets/audio/background.mp3` (`ASSET_PATHS.
+  backgroundMusic`), looped by `MusicTrack`. It is STREAMED through an
+  `<audio>` element routed into the Web Audio graph - never decoded into an
+  AudioBuffer, which would hold tens of MB of PCM for the session - so master
+  volume, mute and the portal's music slider all apply to it.
 - Assets are served straight from the repo `assets/` folder via Vite's
   `publicDir`. Do not copy assets into `client/`.
 
@@ -193,6 +198,9 @@ Procedural, bone-driven, and required for the finished game — not a placeholde
 
 ## World
 
+- **One torii on the route: the great gate over the gorge mouth**
+  (`SpawnDecor`). Gates per island made the river a corridor of red frames;
+  do not add scenery gates along the river.
 - The island ladder is **generated, not authored past the opening**. The
   hand-tuned first ten islands end exactly at the rebirth-0 level cap; every
   island after that continues the same curve by compounding (`GAP_GROWTH`,
@@ -505,9 +513,14 @@ api.bloxity.io) - there is one code path, never a branch on environment.
   (restored, then refreshed from its API) and a login can land after the join,
   so an id-only check left signed-in players with their guest name overhead
   and on the boards. `NetworkClient.updateIdentity` does the comparison.
-- A signed-in account's `pfp` is a PATH (`/pfps/s0.png`); `resolvePfpUrl`
-  turns it into the CDN URL exactly as the SDK's `pfpUrlFromPath` does. Only
-  guest pictures arrive as URLs.
+- **The scoreboard picture is RENDERED FROM THE CURRENT LOOK**, not read from
+  the account: `avatarPfpUrl` builds the SDK's own `getAvatarPfpPath` key
+  (skin, hat, back, parts, proportions) and Bloxity's CDN renders any
+  combination on demand. It is re-sent whenever the avatar changes; a stored
+  `pfp` field only changes when the account is re-read, so the boards showed
+  an old face. `resolvePfpUrl` (paths like `/pfps/s0.png` to CDN URLs) is the
+  fallback when the SDK is absent. A full render key runs past 300 characters,
+  so the server accepts picture URLs up to 600.
 - **A player's shown name is Bloxity's own rule: `displayName || username`**
   (`visibleName` in `BloxitySdk.ts`), never with a leading `@` and never an
   internal or account id. The SDK's documented label for a player is

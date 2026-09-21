@@ -17,12 +17,9 @@ import {
   pagoda,
   paperLantern,
   pond,
-  shimenawa,
   shrineHall,
   smallShrine,
-  spanTorii,
   stoneLantern,
-  torii,
   waterfall,
 } from './JapaneseProps.js';
 import { PropBatch, seededRandom, type Prop } from './PropBatch.js';
@@ -32,12 +29,12 @@ import { routeProgress } from './SkyAtmosphere.js';
 /**
  * Everything along the route that is not the route: the forests and shrines
  * on the canyon rims, waterfalls pouring down the cliffs, floating islets
- * beside the islands, and the gates and lanterns that mark each island.
+ * beside the islands, and the lanterns hung beneath each island.
  *
  * NONE of it enters the playable channel. Trees stand on the rims (|x| >= 33),
- * islets float at |x| ~ 20 - outside the |x| <= 13 channel - and each island
- * gate stands its pillars at |x| = 14.5, just past a player's widest reach.
- * Lanterns hang UNDER the islands. The route's collision is untouched because
+ * islets float at |x| ~ 20 - outside the |x| <= 13 channel - and lanterns hang
+ * UNDER the islands. There are no torii along the river: the one gate on the
+ * route is the great torii over the gorge mouth, in SpawnDecor. The route's collision is untouched because
  * none of this is collision at all.
  *
  * Placement is seeded, so every client sees the identical world; and it is
@@ -199,7 +196,6 @@ export class RouteDecor {
         batch.add(pagoda(), { x, y: rimTop, z, rotationY: random() * 0.3 });
       } else if (i % 3 === 2 || stage === 'late') {
         batch.add(shrineHall(), { x, y: rimTop, z, rotationY: facing });
-        batch.add(torii(stage === 'late'), { x: side * (BANK_WALL.rimX + 6), y: rimTop, z, rotationY: facing, scale: 0.8 });
       } else {
         batch.add(smallShrine(), { x, y: rimTop, z, rotationY: facing, scale: 1.4 });
         batch.add(pond(), { x: -side * (BANK_WALL.rimX + 18), y: rimTop, z: z + 30 });
@@ -223,25 +219,13 @@ export class RouteDecor {
    * hung beneath it, and a floating islet beside it carrying a tree.
    */
   private dressIslands(batch: PropBatch, random: () => number): void {
-    const halfSpan = GORGE.channelHalfWidth + 1.5;
     TROPHY_PLATFORMS.forEach((platform, i) => {
       const theme = AREA_THEMES[platform.area] ?? DEFAULT_AREA_THEME;
       const stage = theme.stage;
-      const nearEdge = platform.centerZ - PLATFORM.length / 2;
 
-      // Gates: every island early and late, every other in the mountains.
-      // The lintel sits at 15 - over any ordinary jump - and the pillars
-      // stand at |x| = 14.5, outside the channel a player can occupy.
-      if (stage !== 'mid' || i % 2 === 0) {
-        const late = stage === 'late';
-        batch.add(spanTorii(halfSpan, -7, late ? 17 : 15, late), { x: 0, y: 0, z: nearEdge - 1.4 });
-        batch.add(shimenawa(), {
-          x: 0,
-          y: (late ? 17 : 15) - 3.2,
-          z: nearEdge - 1.4,
-          scale: [(halfSpan * 2) / 9, 1.4, 1.4],
-        });
-      }
+      // No gate per island: the route has ONE torii, the great gate over the
+      // gorge mouth (SpawnDecor). A gate at every landing made the river a
+      // corridor of red frames.
 
       // Paper lanterns hung from the island's underside at each corner.
       const hookY = PLATFORM.topY - PLATFORM.thickness;
