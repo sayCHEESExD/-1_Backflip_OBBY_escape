@@ -1,31 +1,27 @@
 import { BANK_WALL, GORGE, GORGE_HEAD } from '@obby/shared';
-import {
-  BoxGeometry,
-  Group,
-  Mesh,
-  MeshLambertMaterial,
-  type Material,
-  type Scene,
-} from 'three';
+import { BoxGeometry, Group, Mesh, type Texture } from 'three';
 import { WORLD_COLORS } from '../config/worldVisuals.js';
+import { cliffRock, grass, riverWater } from './JapaneseArt.js';
+import { toon } from './ToonKit.js';
 import type { WorldTextures } from './WorldTextures.js';
 
 /**
- * The gorge shell: the blue channel floor, the steep tiled canyon walls, the
- * green rims that cap them, and the cloudy sky dome.
+ * The gorge shell: the river on the channel floor, the stratified cliff walls
+ * and the grassy rims that cap them. The sky is `SkyAtmosphere`.
  *
- * Everything is a scaled instance of ONE unit box (plus the sky sphere), so
- * the entire environment is a handful of draw calls.
+ * Everything is a scaled instance of ONE unit box, so the entire shell is a
+ * handful of draw calls. Materials are cel-shaded through the shared ramp and
+ * owned by `ToonKit`; only the river's own scrolling texture lives here.
  */
 export class GorgeTerrain {
   readonly root = new Group();
 
   private readonly boxGeometry = new BoxGeometry(1, 1, 1);
-  private readonly materials: Material[] = [];
-  private readonly textures: WorldTextures;
+  private riverMap: Texture | null = null;
+  /** Per-surface clones of the shared art, each with its own repeat. */
+  private readonly clones: Texture[] = [];
 
   constructor(textures: WorldTextures) {
-    this.textures = textures;
     const length = GORGE.horizonZ - GORGE.startZ;
     const centerZ = (GORGE.horizonZ + GORGE.startZ) / 2;
 
@@ -33,23 +29,25 @@ export class GorgeTerrain {
     this.buildWalls(textures, length, centerZ);
   }
 
-  /** Paint the sky. Called once the terrain is attached to a scene. */
-  applySky(scene: Scene): void {
-    scene.background = this.textures.sky();
+  /** Let the river flow. Purely a texture scroll - the floor is a death zone. */
+  update(delta: number): void {
+    if (this.riverMap) this.riverMap.offset.y -= delta * 0.35;
   }
 
   dispose(): void {
     this.boxGeometry.dispose();
-    for (const material of this.materials) material.dispose();
+    this.riverMap?.dispose();
+    for (const texture of this.clones) texture.dispose();
   }
 
   /**
-   * The blue channel running the length of the gorge.
+   * The river running the length of the gorge.
    *
-   * It reads as a river but is NOT water: a flat lit tiled surface with no
-   * transparency, no reflection and no animation. It is a death zone.
+   * Opaque and flat - a scrolling foam texture is the only thing that moves.
+   * It is still the death zone.
    */
   private buildWater(textures: WorldTextures): void {
+    void textures;
     // The river BEGINS at the starting platform's front edge. Behind that the
     // world is solid headland, so the channel reads as running out from under
     // the start rather than passing beneath a slab floating over it.
@@ -61,15 +59,13 @@ export class GorgeTerrain {
     const width = (GORGE.bankInnerX + 4) * 2;
     const depth = 8;
 
-    const map = textures.tiles(
-      WORLD_COLORS.waterTile,
-      WORLD_COLORS.waterLine,
-      WORLD_COLORS.waterTileAlt,
-    );
-    map.repeat.set(width * 0.14, length * 0.14);
+    // A private clone, so scrolling it cannot move any other surface.
+    const map = riverWater().clone();
+    map.needsUpdate = true;
+    map.repeat.set(width / 22, length / 22);
+    this.riverMap = map;
 
-    const material = new MeshLambertMaterial({ map });
-    this.materials.push(material);
+    const material = toon(0xffffff, { map, emissive: 0x0a3a60, emissiveIntensity: 0.35 });
 
     const water = new Mesh(this.boxGeometry, material);
     water.scale.set(width, depth, length);
@@ -92,23 +88,24 @@ export class GorgeTerrain {
    * headland, so they flank the start without intersecting it.
    */
   private buildWalls(textures: WorldTextures, length: number, centerZ: number): void {
-    const wallMap = textures.tiles(
-      WORLD_COLORS.wallTile,
-      WORLD_COLORS.wallLine,
-      WORLD_COLORS.wallTileAlt,
-    );
+    void textures;
     const rise = BANK_WALL.rimY - BANK_WALL.footY;
     const run = BANK_WALL.rimX - BANK_WALL.footX;
     const slopeFaceLength = Math.hypot(rise, run);
-    wallMap.repeat.set(length * 0.1, slopeFaceLength * 0.14);
 
-    const wallMaterial = new MeshLambertMaterial({ map: wallMap });
-    this.materials.push(wallMaterial);
+    // The slab's top face runs U across the slope, so the strata are turned
+    // to lie along the gorge. One texture repeat is roughly 18 units.
+    const wallMap = cliffRock(true).clone();
+    wallMap.needsUpdate = true;
+    wallMap.repeat.set(slopeFaceLength / 18, length / 18);
+    this.clones.push(wallMap);
+    const wallMaterial = toon(0xffffff, { map: wallMap });
 
-    const rimMap = textures.grassStuds(WORLD_COLORS.rimGrass, WORLD_COLORS.rimGrassStud);
-    rimMap.repeat.set(BANK_WALL.rimWidth * 0.22, length * 0.22);
-    const rimMaterial = new MeshLambertMaterial({ map: rimMap });
-    this.materials.push(rimMaterial);
+    const rimMap = grass(WORLD_COLORS.grass, WORLD_COLORS.grassDark, WORLD_COLORS.grassLight, 9).clone();
+    rimMap.needsUpdate = true;
+    rimMap.repeat.set(BANK_WALL.rimWidth / 14, length / 14);
+    this.clones.push(rimMap);
+    const rimMaterial = toon(0xffffff, { map: rimMap });
 
     // Thickness of the slab whose TOP face forms the visible slope.
     const slabDepth = 26;

@@ -12,12 +12,10 @@ import {
 import {
   BoxGeometry,
   CanvasTexture,
-  Color,
   DoubleSide,
   Group,
   Mesh,
   MeshBasicMaterial,
-  MeshLambertMaterial,
   PlaneGeometry,
   SRGBColorSpace,
   type Material,
@@ -29,16 +27,30 @@ import {
   AREA_THEMES,
   DEFAULT_AREA_THEME,
   WORLD_COLORS,
+  type AreaTheme,
 } from '../config/worldVisuals.js';
+import {
+  DISPLAY_FONT,
+  KANJI_FONT,
+  cliffRock,
+  drawBlossom,
+  flagstones,
+  grass,
+  lacquer,
+  woodPlanks,
+} from './JapaneseArt.js';
+import { toon } from './ToonKit.js';
 import type { WorldTextures } from './WorldTextures.js';
 
 /**
  * The starting area, the trophy islands, their themed decks, the collection
- * pads and the floating labels.
+ * pads and the floating plaques.
  *
  * Every island shares ONE body geometry and ONE body material, so the geometry
- * rule is untouched. What varies per island is presentation only: a thin
- * coloured deck laid on top, and the area name floating above it.
+ * rule is untouched. What varies per island is presentation only: the deck
+ * laid on top - timber planks along the sakura gardens, mossy flagstones in
+ * the mountains, gold-inlaid lacquer on the floating shrines - and a wooden
+ * plaque carrying the island's Japanese title and English name.
  */
 /** Thickness of the grass laid over the headland's rock. */
 const GRASS_THICKNESS = 0.5;
@@ -47,20 +59,26 @@ export class TrophyPlatforms {
   readonly root = new Group();
 
   private readonly geometries: BoxGeometry[] = [];
+  /** Materials created here (labels). Toon materials belong to ToonKit. */
   private readonly materials: Material[] = [];
   private readonly textures: Texture[] = [];
+  /** Clones of shared art carrying this surface's own repeat. */
+  private readonly clones: Texture[] = [];
+  private readonly deckMaps = new Map<string, Texture>();
   private padLabelGeometry: PlaneGeometry | null = null;
   private areaLabelGeometry: PlaneGeometry | null = null;
 
   constructor(textures: WorldTextures) {
-    this.buildSpawnPlatform(textures);
-    this.buildTrophyPlatforms(textures);
+    void textures;
+    this.buildSpawnPlatform();
+    this.buildTrophyPlatforms();
   }
 
   dispose(): void {
     for (const geometry of this.geometries) geometry.dispose();
     for (const material of this.materials) material.dispose();
     for (const texture of this.textures) texture.dispose();
+    for (const texture of this.clones) texture.dispose();
     this.padLabelGeometry?.dispose();
     this.areaLabelGeometry?.dispose();
   }
@@ -68,34 +86,22 @@ export class TrophyPlatforms {
   /**
    * The head of the gorge: solid ground, not a floating slab.
    *
-   * The starting area used to be a thin platform hanging in mid air with the
-   * river visible underneath it. It is now the TOP of a headland that fills
-   * the canyon from rim to rim and runs down past the river floor, so the
-   * start reads as the ground the gorge is cut into. The blue channel begins
-   * at its front face, which is why the river appears to flow out from under
-   * the player rather than past them.
+   * The TOP of a headland that fills the canyon from rim to rim and runs down
+   * past the river floor, so the start reads as the ground the gorge is cut
+   * into. The river begins at its front face.
    *
-   * One box, one geometry. The top face takes the spawn grass and every other
-   * face the canyon wall tile, so the sides and the front read as rock.
+   * One rock box; the shrine-garden grass is laid on separately as slabs, so
+   * the treadmill bay can own its own rectangle of floor.
    */
-  private buildSpawnPlatform(textures: WorldTextures): void {
+  private buildSpawnPlatform(): void {
     const width = GORGE_HEAD.halfWidth * 2;
     const backZ = GORGE.startZ;
     const length = GORGE_HEAD.riverStartZ - backZ;
     const height = SPAWN_PLATFORM.topY - GORGE_HEAD.baseY;
 
-    const rockMap = textures.tiles(
-      WORLD_COLORS.wallTile,
-      WORLD_COLORS.wallLine,
-      WORLD_COLORS.wallTileAlt,
-    );
-    rockMap.repeat.set(length * 0.12, height * 0.12);
-    const rock = new MeshLambertMaterial({ map: rockMap });
-    this.materials.push(rock);
+    const rockMap = this.repeated(cliffRock(), length / 18, height / 18);
+    const rock = toon(0xffffff, { map: rockMap });
 
-    // The headland is ALL rock and its top stops short of the walkable
-    // surface. The grass is laid on separately as slabs, so the treadmill bay
-    // can own its own rectangle of floor instead of the two fighting over it.
     const bodyGeometry = new BoxGeometry(width, height - GRASS_THICKNESS, length);
     this.geometries.push(bodyGeometry);
 
@@ -111,12 +117,8 @@ export class TrophyPlatforms {
     // A rock ledge stepping out just below the grass, so the headland reads as
     // cut terrain meeting the canyon rather than a box with a lawn on top.
     const ledgeGeometry = new BoxGeometry(width + 3, 1.6, length + 3);
-    const ledgeMaterial = new MeshLambertMaterial({
-      map: rockMap,
-      color: new Color(WORLD_COLORS.headlandLedge),
-    });
+    const ledgeMaterial = toon(0xb8ac9c, { map: rockMap });
     this.geometries.push(ledgeGeometry);
-    this.materials.push(ledgeMaterial);
 
     const ledge = new Mesh(ledgeGeometry, ledgeMaterial);
     ledge.position.set(
@@ -127,7 +129,7 @@ export class TrophyPlatforms {
     ledge.receiveShadow = true;
     this.root.add(ledge);
 
-    this.buildSpawnGrass(textures, width, backZ, length);
+    this.buildSpawnGrass(width, backZ, length);
   }
 
   /**
@@ -137,16 +139,14 @@ export class TrophyPlatforms {
    * the middle of them. Every visible square of the starting area therefore
    * belongs to exactly one mesh, with no two surfaces at the same height.
    */
-  private buildSpawnGrass(
-    textures: WorldTextures,
-    width: number,
-    backZ: number,
-    length: number,
-  ): void {
-    const map = textures.grassStuds(WORLD_COLORS.spawnGrass, WORLD_COLORS.spawnGrassStud);
-    map.repeat.set(width * 0.22, length * 0.22);
-    const grass = new MeshLambertMaterial({ map });
-    this.materials.push(grass);
+  private buildSpawnGrass(width: number, backZ: number, length: number): void {
+    // Shrine-garden grass, strewn with fallen petals.
+    const map = this.repeated(
+      grass(WORLD_COLORS.grass, WORLD_COLORS.grassDark, WORLD_COLORS.grassLight, 3),
+      width / 12,
+      length / 12,
+    );
+    const lawn = toon(0xffffff, { map });
 
     const frontZ = backZ + length;
     const halfWidth = width / 2;
@@ -168,7 +168,7 @@ export class TrophyPlatforms {
       const geometry = new BoxGeometry(sizeX, GRASS_THICKNESS, sizeZ);
       this.geometries.push(geometry);
 
-      const slab = new Mesh(geometry, grass);
+      const slab = new Mesh(geometry, lawn);
       slab.position.set(
         (minX + maxX) / 2,
         SPAWN_PLATFORM.topY - GRASS_THICKNESS / 2,
@@ -179,24 +179,17 @@ export class TrophyPlatforms {
     }
   }
 
-  private buildTrophyPlatforms(textures: WorldTextures): void {
+  private buildTrophyPlatforms(): void {
     // Shared across every island. The body is SHORTENED by the deck's
     // thickness and the deck sits in the space it leaves, so the two meet at
-    // one coincident hidden face instead of two tops a hundredth apart - which
-    // is what was z-fighting across every island at distance.
+    // one coincident hidden face instead of two tops a hundredth apart.
     const bodyHeight = PLATFORM.thickness - AREA_DECK_THICKNESS;
     const bodyGeometry = new BoxGeometry(PLATFORM.width, bodyHeight, PLATFORM.length);
-    const tileMap = textures.tiles(
-      WORLD_COLORS.platformTile,
-      WORLD_COLORS.platformLine,
-      WORLD_COLORS.platformTileAlt,
-    );
-    tileMap.repeat.set(PLATFORM.width * 0.2, PLATFORM.length * 0.2);
-    const bodyMaterial = new MeshLambertMaterial({ map: tileMap });
+    // Carved stone with moss, identical for every island.
+    const bodyMaterial = toon(0xd8cfc0, { map: this.repeated(cliffRock(), 1.2, 0.4) });
     this.geometries.push(bodyGeometry);
-    this.materials.push(bodyMaterial);
 
-    // One shared deck geometry; only its material colour differs per area.
+    // One shared deck geometry; only its material differs per area.
     const deckGeometry = new BoxGeometry(
       PLATFORM.width,
       AREA_DECK_THICKNESS,
@@ -222,16 +215,7 @@ export class TrophyPlatforms {
       body.castShadow = true;
       this.root.add(body);
 
-      // Themed deck, tinted by the area. Almost every island shares the one
-      // tiling; Space Island swaps in a starfield instead.
-      const deckMap = theme.deckTexture === 'stars' ? textures.starfield() : tileMap;
-      const deckMaterial = new MeshLambertMaterial({
-        map: deckMap,
-        color: new Color(theme.deck),
-      });
-      this.materials.push(deckMaterial);
-
-      const deck = new Mesh(deckGeometry, deckMaterial);
+      const deck = new Mesh(deckGeometry, this.deckMaterial(theme));
       // Top face exactly at the collision surface; bottom face coincident with
       // the body's top, where it is hidden.
       deck.position.set(
@@ -245,11 +229,51 @@ export class TrophyPlatforms {
       const padX = collectionZoneX();
       const padZ = collectionZoneZ(platform.centerZ);
       this.addPadLabel(padX, padZ, platform.value);
-      this.addAreaLabel(platform.centerZ, platform.area, theme.icon);
+      this.addAreaLabel(platform.centerZ, theme);
     }
   }
 
-  /** Flat gold rectangle marking the collection area, flush with the deck. */
+  /** One deck material per style and tint, cached through ToonKit. */
+  private deckMaterial(theme: AreaTheme): Material {
+    switch (theme.deckStyle) {
+      case 'planks':
+        return toon(theme.deck, { map: this.deckMap('planks', woodPlanks(), 5.5) });
+      case 'stone':
+        return toon(theme.deck, { map: this.deckMap('stone', flagstones(), 6) });
+      case 'lacquer':
+        // Lacquer carries its own colour, so the gold inlay stays gold.
+        return toon(0xffffff, {
+          map: this.deckMap(`lacquer:${theme.deck}`, lacquer(theme.deck), 11),
+          emissive: theme.deck,
+          emissiveIntensity: 0.12,
+        });
+    }
+  }
+
+  /** A deck texture repeated every `unit` world units, shared per style. */
+  private deckMap(key: string, source: Texture, unit: number): Texture {
+    const existing = this.deckMaps.get(key);
+    if (existing) return existing;
+    const map = this.repeated(source, PLATFORM.width / unit, PLATFORM.length / unit);
+    if (key === 'planks') {
+      // Planks lie ACROSS the route, so the run crosses the seams.
+      map.center.set(0.5, 0.5);
+      map.rotation = Math.PI / 2;
+    }
+    this.deckMaps.set(key, map);
+    return map;
+  }
+
+  /** A clone of shared art with this surface's own repeat. */
+  private repeated(source: Texture, x: number, y: number): Texture {
+    const map = source.clone();
+    map.needsUpdate = true;
+    map.repeat.set(x, y);
+    this.clones.push(map);
+    return map;
+  }
+
+  /** The reward tag over the collection area. */
   private addPadLabel(centerX: number, centerZ: number, value: number): void {
     if (!this.padLabelGeometry) return;
     const label = this.makeLabelMesh(this.padLabelGeometry, drawPadLabel(value));
@@ -257,10 +281,10 @@ export class TrophyPlatforms {
     this.root.add(label);
   }
 
-  /** The area's icon and name, floating high above the island centre. */
-  private addAreaLabel(centerZ: number, area: string, icon: string): void {
+  /** The island's plaque - kanji over its English name - high above the centre. */
+  private addAreaLabel(centerZ: number, theme: AreaTheme): void {
     if (!this.areaLabelGeometry) return;
-    const label = this.makeLabelMesh(this.areaLabelGeometry, drawAreaLabel(area, icon));
+    const label = this.makeLabelMesh(this.areaLabelGeometry, drawAreaLabel(theme));
     label.position.set(PLATFORM.x, PLATFORM.topY + AREA_LABEL_HEIGHT, centerZ);
     this.root.add(label);
   }
@@ -310,55 +334,67 @@ const outlined = (
 ): void => {
   ctx.font = font;
   ctx.lineWidth = outline;
-  ctx.strokeStyle = '#121b28';
+  ctx.strokeStyle = '#1b1416';
   ctx.strokeText(text, x, y);
   ctx.fillStyle = fill;
   ctx.fillText(text, x, y);
 };
 
-/** "Return" above a dark plaque reading "+N Wins". */
+/** "Return" above a red lacquer tag reading "+N Wins". */
 const drawPadLabel = (value: number): HTMLCanvasElement => {
   const width = 320;
   const height = 192;
   const ctx = canvasOf(width, height);
 
-  outlined(ctx, 'Return', width / 2, 34, 'bold 40px system-ui, sans-serif', '#ffffff', 9);
+  outlined(ctx, 'Return', width / 2 + 18, 34, `900 38px ${DISPLAY_FONT}`, '#fff4e0', 9);
+  outlined(ctx, '帰', width / 2 - 86, 34, `900 38px ${KANJI_FONT}`, '#ff9cc0', 8);
 
-  // Plaque behind the reward, as in the reference.
-  const plaqueW = 264;
-  const plaqueH = 84;
+  // A red lacquer tag with a gold rule, like a shrine's offering board.
+  const plaqueW = 272;
+  const plaqueH = 88;
   const x = (width - plaqueW) / 2;
-  const y = 76;
-  ctx.fillStyle = 'rgba(14,22,34,0.82)';
-  ctx.strokeStyle = '#0b111b';
-  ctx.lineWidth = 5;
-  roundedRect(ctx, x, y, plaqueW, plaqueH, 14);
+  const y = 74;
+  ctx.fillStyle = '#b3261e';
+  ctx.strokeStyle = '#1b1416';
+  ctx.lineWidth = 6;
+  roundedRect(ctx, x, y, plaqueW, plaqueH, 10);
   ctx.fill();
   ctx.stroke();
+  ctx.strokeStyle = '#f2c14e';
+  ctx.lineWidth = 3;
+  roundedRect(ctx, x + 7, y + 7, plaqueW - 14, plaqueH - 14, 6);
+  ctx.stroke();
 
-  outlined(
-    ctx,
-    `+${value} Wins`,
-    width / 2,
-    y + plaqueH / 2 + 2,
-    'bold 54px system-ui, sans-serif',
-    '#ffd75e',
-    8,
-  );
+  outlined(ctx, `+${value} Wins`, width / 2, y + plaqueH / 2 + 2, `900 46px ${DISPLAY_FONT}`, '#ffe08a', 8);
   return ctx.canvas;
 };
 
-/** The area icon above its name. */
-const drawAreaLabel = (area: string, icon: string): HTMLCanvasElement => {
+/**
+ * A hanging wooden plaque: dark timber in a gold frame, the island's Japanese
+ * title large and its English name beneath, so it stays readable.
+ */
+const drawAreaLabel = (theme: AreaTheme): HTMLCanvasElement => {
   const width = 512;
   const height = 170;
   const ctx = canvasOf(width, height);
 
-  ctx.font = '64px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", system-ui, sans-serif';
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText(icon, width / 2, 46);
+  const late = theme.stage === 'late';
+  ctx.fillStyle = late ? '#1b1416' : '#3a2a22';
+  ctx.strokeStyle = '#f2c14e';
+  ctx.lineWidth = 6;
+  roundedRect(ctx, 12, 8, width - 24, height - 16, 12);
+  ctx.fill();
+  ctx.stroke();
+  ctx.strokeStyle = '#c8281e';
+  ctx.lineWidth = 3;
+  roundedRect(ctx, 24, 18, width - 48, height - 36, 8);
+  ctx.stroke();
+  drawBlossom(ctx, 54, height / 2, 18, '#ff9cc0');
+  drawBlossom(ctx, width - 54, height / 2, 18, '#ff9cc0');
 
-  outlined(ctx, area, width / 2, 124, 'bold 52px system-ui, sans-serif', '#ffffff', 11);
+  const kanjiSize = theme.kanji.length > 3 ? 54 : 64;
+  outlined(ctx, theme.kanji, width / 2, 62, `900 ${kanjiSize}px ${KANJI_FONT}`, '#fff4e0', 8);
+  outlined(ctx, theme.name.toUpperCase(), width / 2, 126, `900 32px ${DISPLAY_FONT}`, '#ffd36b', 7);
   return ctx.canvas;
 };
 

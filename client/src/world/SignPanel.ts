@@ -1,6 +1,7 @@
 /**
- * The house style for a hanging sign: a rounded blue panel with a light inner
- * stroke, carrying an emoji and big outlined white text.
+ * The house style for a hanging sign: a dark timber board in a gold frame with
+ * a red inner rule, carrying a kanji seal and big cream lettering - a shrine
+ * signboard, lit from behind by warm lantern light.
  *
  * Extracted so the Train Speed banner and the Win Shop sign are literally the
  * same treatment rather than two drawings that happen to look alike - a second
@@ -18,19 +19,20 @@ import {
   type CanvasTexture,
 } from 'three';
 import { createGlowTexture } from './GlowTexture.js';
+import { DISPLAY_FONT, KANJI_FONT, drawBlossom } from './JapaneseArt.js';
 
-/** Panel fill and its inner stroke. */
-const PANEL_FILL = '#2a8fe0';
-const PANEL_STROKE = '#7fd6ff';
+/** Board fill and its gold frame. */
+const PANEL_FILL = '#3a2a22';
+const PANEL_STROKE = '#f2c14e';
 
-/** Dark blue the surrounding frame mesh is painted. */
-export const SIGN_FRAME_COLOR = 0x1a4f8a;
+/** Dark timber the surrounding frame mesh is painted. */
+export const SIGN_FRAME_COLOR = 0x2a1d17;
 
 /** How far the frame mesh oversails the panel, in world units. */
 export const SIGN_FRAME_MARGIN = 0.7;
 
-/** Neon blue the sign frames are lit with. */
-export const SIGN_GLOW_COLOR = 0x35d6ff;
+/** Warm lantern light the sign frames are lit with. */
+export const SIGN_GLOW_COLOR = 0xffa24a;
 
 /** How far the halo reaches past the frame, in WORLD units. */
 const GLOW_SPREAD = 1.5;
@@ -65,7 +67,7 @@ export const createSignFrameMaterial = (): MeshLambertMaterial =>
   new MeshLambertMaterial({
     color: SIGN_FRAME_COLOR,
     emissive: new Color(SIGN_GLOW_COLOR),
-    emissiveIntensity: 0.55,
+    emissiveIntensity: 0.18,
   });
 
 /**
@@ -126,6 +128,11 @@ export const createSignGlow = (frameWidth: number, frameHeight: number): SignGlo
 const ICON_IMAGE_SCALE = 1.5;
 
 export interface SignOptions {
+  /**
+   * Kanji stamped in a red seal to the left of the label. Takes the icon's
+   * slot; the English label is always the readable part.
+   */
+  readonly kanji?: string;
   /** Emoji shown to the left of the label. Omit for text only. */
   readonly icon?: string;
   /**
@@ -158,28 +165,83 @@ export const drawSign = (label: string, options: SignOptions = {}): HTMLCanvasEl
   const ctx = canvas.getContext('2d');
   if (!ctx) return canvas;
 
-  // Panel.
+  // Board: dark timber, a gold frame, a red inner rule and wood grain.
   const inset = 8;
-  const radius = Math.min(26, height * 0.14);
-  ctx.fillStyle = PANEL_FILL;
+  const radius = Math.min(22, height * 0.12);
+  const grain = ctx.createLinearGradient(0, 0, 0, height);
+  grain.addColorStop(0, '#4a352a');
+  grain.addColorStop(0.5, PANEL_FILL);
+  grain.addColorStop(1, '#2a1d17');
+  ctx.fillStyle = grain;
   ctx.strokeStyle = PANEL_STROKE;
   ctx.lineWidth = Math.max(6, height * 0.05);
   ctx.beginPath();
   ctx.roundRect(inset, inset, width - inset * 2, height - inset * 2, radius);
   ctx.fill();
   ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+  ctx.lineWidth = 2;
+  for (let y = inset + 18; y < height - inset; y += 22) {
+    ctx.beginPath();
+    ctx.moveTo(inset + 20, y);
+    ctx.bezierCurveTo(width * 0.3, y + 5, width * 0.7, y - 5, width - inset - 20, y);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = '#c8281e';
+  ctx.lineWidth = Math.max(3, height * 0.02);
+  ctx.beginPath();
+  ctx.roundRect(inset + 14, inset + 12, width - (inset + 14) * 2, height - (inset + 12) * 2, radius * 0.6);
+  ctx.stroke();
+  drawBlossom(ctx, inset + 38, height / 2, height * 0.1, '#ff9cc0');
+  drawBlossom(ctx, width - inset - 38, height / 2, height * 0.1, '#ff9cc0');
 
   // Text, sized to the panel so a long label still fits.
-  const fontSize = height * 0.48;
-  const textFont = `900 ${fontSize}px "Trebuchet MS", "Segoe UI", sans-serif`;
+  const fontSize = height * 0.44;
+  const textFont = `900 ${fontSize}px ${DISPLAY_FONT}`;
   const iconFont = `${fontSize * 0.95}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
-  const gap = fontSize * 0.3;
+  const gap = fontSize * 0.34;
 
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
 
   ctx.font = textFont;
   const labelWidth = ctx.measureText(label).width;
+
+  // The kanji seal: a red hanko square with the characters in cream.
+  const sealChars = options.kanji ? [...options.kanji] : [];
+  const sealSize = height * 0.62;
+  if (sealChars.length > 0) {
+    const sealWidth = sealSize * (sealChars.length > 1 ? 1.6 : 1);
+    const total = sealWidth + gap + labelWidth;
+    const x0 = (width - total) / 2;
+    const y0 = (height - sealSize) / 2;
+    ctx.fillStyle = '#c8281e';
+    ctx.strokeStyle = '#fff4e0';
+    ctx.lineWidth = Math.max(3, height * 0.02);
+    ctx.beginPath();
+    ctx.roundRect(x0, y0, sealWidth, sealSize, sealSize * 0.12);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#fff4e0';
+    ctx.textAlign = 'center';
+    const charSize = sealChars.length > 1 ? sealSize * 0.66 : sealSize * 0.78;
+    ctx.font = `900 ${charSize}px ${KANJI_FONT}`;
+    sealChars.forEach((c, i) => {
+      const cx = x0 + (sealWidth / (sealChars.length + 0)) * (i + 0.5);
+      ctx.fillText(c, cx, height / 2 + charSize * 0.04);
+    });
+    ctx.textAlign = 'left';
+    const lx = x0 + sealWidth + gap;
+    ctx.font = textFont;
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = fontSize * 0.19;
+    ctx.strokeStyle = 'rgba(20,10,8,0.95)';
+    ctx.strokeText(label, lx, height / 2 + fontSize * 0.04);
+    ctx.fillStyle = '#fff4e0';
+    ctx.fillText(label, lx, height / 2 + fontSize * 0.04);
+    return canvas;
+  }
+
   ctx.font = iconFont;
   const emojiWidth = options.icon ? ctx.measureText(options.icon).width : 0;
 
@@ -195,11 +257,6 @@ export const drawSign = (label: string, options: SignOptions = {}): HTMLCanvasEl
 
   if (options.icon) {
     if (options.iconImage) {
-      // CONTAIN, not stretch. The box is square but the art is not - every one
-      // of these files is a few percent off - so filling the box outright
-      // would squash it. Centred in the box and on the text's middle, so
-      // growing the icon stays balanced against the label rather than sinking
-      // below the line.
       const art = options.iconImage;
       const fit = Math.min(iconBox / art.naturalWidth, iconBox / art.naturalHeight);
       const drawW = art.naturalWidth * fit;
@@ -215,9 +272,9 @@ export const drawSign = (label: string, options: SignOptions = {}): HTMLCanvasEl
   ctx.font = textFont;
   ctx.lineJoin = 'round';
   ctx.lineWidth = fontSize * 0.19;
-  ctx.strokeStyle = 'rgba(10,30,60,0.95)';
+  ctx.strokeStyle = 'rgba(20,10,8,0.95)';
   ctx.strokeText(label, x, y);
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = '#fff4e0';
   ctx.fillText(label, x, y);
 
   return canvas;

@@ -10,23 +10,33 @@ import {
 import { WORLD_COLORS, WORLD_FOG } from '../config/worldVisuals.js';
 
 const SKY_COLOR = WORLD_COLORS.sky;
-const GROUND_BOUNCE = 0x6f8f5a;
+const GROUND_BOUNCE = 0x8a6f5a;
 
-/** Owns the Three.js scene graph root and the base lighting rig. */
+/**
+ * Owns the Three.js scene graph root and the base lighting rig.
+ *
+ * The lights are exposed so `SkyAtmosphere` can grade them along the route -
+ * warm afternoon at the start, crimson dusk at the end. Their placement and
+ * the shadow camera never change.
+ */
 export class SceneManager {
   readonly scene = new Scene();
+  readonly hemi: HemisphereLight;
+  readonly ambient: AmbientLight;
+  readonly sun: DirectionalLight;
 
   constructor() {
     this.scene.background = new Color(SKY_COLOR);
     this.scene.fog = new Fog(SKY_COLOR, WORLD_FOG.near, WORLD_FOG.far);
 
-    const hemi = new HemisphereLight(SKY_COLOR, GROUND_BOUNCE, 1.1);
-    hemi.position.set(0, 50, 0);
-    this.scene.add(hemi);
+    this.hemi = new HemisphereLight(0xd6e8ff, GROUND_BOUNCE, 1.05);
+    this.hemi.position.set(0, 50, 0);
+    this.scene.add(this.hemi);
 
-    this.scene.add(new AmbientLight(0xffffff, 0.35));
+    this.ambient = new AmbientLight(0xffffff, 0.32);
+    this.scene.add(this.ambient);
 
-    const sun = new DirectionalLight(0xffffff, 2.0);
+    const sun = new DirectionalLight(0xfff1dc, 2.0);
     sun.position.set(30, 55, 20);
     sun.castShadow = true;
     sun.shadow.mapSize.set(1024, 1024);
@@ -39,5 +49,6 @@ export class SceneManager {
     sun.shadow.bias = -0.0008;
     this.scene.add(sun);
     this.scene.add(sun.target);
+    this.sun = sun;
   }
 }

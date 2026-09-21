@@ -254,26 +254,14 @@ export class BootShop {
     this.materials.push(glow.material);
     this.glowTexture = glow.texture;
 
+    // 勝 - victory - in the seal; "Win Shop" stays the readable part.
     const texture = new CanvasTexture(
-      drawSign('Win Shop', { icon: '🏆', width: SIGN_WIDTH, height: SIGN_HEIGHT }),
+      drawSign('Win Shop', { kanji: '勝', width: SIGN_WIDTH, height: SIGN_HEIGHT }),
     );
     texture.colorSpace = SRGBColorSpace;
     // The sign never changes, so it is not registered for redraws - but its
     // texture still needs disposing.
     this.signTexture = texture;
-
-    // One redraw when the art arrives. `disposed` guards a shop torn down
-    // while the image is still in flight.
-    void loadIconImage('trophy').then((image) => {
-      if (!image || this.disposed) return;
-      texture.image = drawSign('Win Shop', {
-        icon: '🏆',
-        iconImage: image,
-        width: SIGN_WIDTH,
-        height: SIGN_HEIGHT,
-      });
-      texture.needsUpdate = true;
-    });
 
     const panelGeometry = new PlaneGeometry(panelLength, panelHeight);
     this.planes.push(panelGeometry);

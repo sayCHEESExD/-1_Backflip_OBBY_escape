@@ -321,7 +321,7 @@ export class Game {
 
   /** Load assets and build the world. Networking is started separately. */
   async initialise(): Promise<PlayerModelReport> {
-    this.world.addTo(this.sceneManager.scene);
+    this.world.addTo(this.sceneManager.scene, this.sceneManager);
 
     this.modelReport = await playerModelLoader.load();
     this.overlay?.setModelReport(this.modelReport);
@@ -406,14 +406,13 @@ export class Game {
 
     this.syncLeaderboards();
 
-    this.world.bootShop.update(delta);
-    this.world.treadmills.update(delta);
-    this.world.winPads.update(delta);
     this.speedPopups.update(delta);
     this.debris.update(delta);
     this.winCups.update(delta, this.camera.camera.quaternion);
     this.camera.update(delta);
     this.remotePlayers.update(delta);
+    // After the camera, so the sky layers sit on this frame's eye position.
+    this.world.update(delta, this.camera.camera.position, player?.position.z ?? 0);
 
     this.renderer.renderer.render(this.sceneManager.scene, this.camera.camera);
 
