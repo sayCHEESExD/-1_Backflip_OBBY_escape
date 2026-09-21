@@ -34,6 +34,11 @@ export interface LegionGuest {
   displayName?: string;
   pfp?: string;
   isGuest: true;
+  /**
+   * The guest's own avatar selection, forwarded by the portal (or remembered
+   * locally). A guest can dress up too, so this is as real as a user's.
+   */
+  avatar?: LegionEquipped & { proportions?: LegionProportions };
 }
 
 export type LegionPresenceStatus = 'online' | 'in-game' | 'in_game' | 'away' | 'offline';

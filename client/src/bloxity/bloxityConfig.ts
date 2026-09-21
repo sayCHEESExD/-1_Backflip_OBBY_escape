@@ -6,6 +6,12 @@
  * bridge reads them instead of hard-coding strings at each call site.
  */
 
+import {
+  DEFAULT_AVATAR_PROPORTIONS,
+  clampAvatarProportions,
+  isAvatarIdSet,
+  type AvatarPartSlot,
+} from '@obby/shared';
 import type { LegionProportions } from './sdkTypes.js';
 
 /**
@@ -36,6 +42,16 @@ export const API_URL = (import.meta.env['VITE_BLOXITY_API_URL'] as string | unde
 /** Avatar asset CDN root. */
 export const AVATAR_CDN = 'https://static.bloxity.io/avatars';
 
+/** Body-part file per slot under `/parts`, `{id}` filled in by `partMesh`. */
+const PART_FILES: Readonly<Record<AvatarPartSlot, string>> = {
+  head: 'head/{id}.glb',
+  torso: 'torso/{id}.glb',
+  armL: 'arms/{id}_L.glb',
+  armR: 'arms/{id}_R.glb',
+  legL: 'legs/{id}_L.glb',
+  legR: 'legs/{id}_R.glb',
+};
+
 /** Where each avatar slot's mesh and texture live under {@link AVATAR_CDN}. */
 export const avatarUrls = {
   hatMesh: (id: string) => `${AVATAR_CDN}/items/hats/${id}.obj`,
@@ -43,42 +59,28 @@ export const avatarUrls = {
   backMesh: (id: string) => `${AVATAR_CDN}/items/back/${id}.obj`,
   backTexture: (id: string) => `${AVATAR_CDN}/textures/back/${id}.png`,
   skinTexture: (id: string) => `${AVATAR_CDN}/skins/${id}.png`,
+  /** Bloxity's base avatar body: one skeleton, six skinned part meshes. */
+  baseBody: () => `${AVATAR_CDN}/player.glb`,
+  /**
+   * A body-part model, by the SDK's SLOT_FILE_INFO: heads and torsos are one
+   * file, arms and legs are a left and a right file sharing one id.
+   */
+  partMesh: (slot: AvatarPartSlot, id: string) => `${AVATAR_CDN}/parts/${PART_FILES[slot]}`.replace('{id}', id),
   icon: (id: string) => `${AVATAR_CDN}/icons/${id}.png`,
 } as const;
 
 /**
- * Whether an id means "something is equipped here".
- *
- * The SDK uses several spellings for empty across slots and environments, and
- * every one of them would otherwise be fetched from the CDN as a real id.
+ * Whether an id means "something is equipped here". One definition, shared
+ * with the server's avatar-look parser.
  */
-export const isEquipped = (id: string | null | undefined): id is string =>
-  typeof id === 'string' && id !== '' && id !== '-1' && id !== 'undefined' && id !== 'null';
+export const isEquipped = (id: string | null | undefined): id is string => isAvatarIdSet(id);
 
 /** Proportion defaults, applied to anything the portal has not set. */
-export const DEFAULT_PROPORTIONS: Required<LegionProportions> = {
-  height: 1,
-  shoulderWidth: 1,
-  armLength: 1,
-  legOffsetX: 1,
-  torsoScaleX: 1,
-  neckHeight: 1,
-  headScale: 1,
-};
-
-/** The portal's own limits, mirrored so a local write is clamped identically. */
-const PROPORTION_RANGE: Record<keyof LegionProportions, readonly [number, number]> = {
-  height: [0.5, 1.6],
-  shoulderWidth: [0.5, 1.5],
-  armLength: [0.05, 3],
-  legOffsetX: [-0.7, 5],
-  torsoScaleX: [0.3, 2],
-  neckHeight: [0.94, 1.2],
-  headScale: [0.3, 2.6],
-};
+export const DEFAULT_PROPORTIONS: Required<LegionProportions> = { ...DEFAULT_AVATAR_PROPORTIONS };
 
 /**
- * Fill in and clamp a partial proportions object.
+ * Fill in and clamp a partial proportions object, to the portal's own limits
+ * (`AVATAR_PROPORTION_RANGE` in shared, which the server clamps to as well).
  *
  * The SDK returns `{}` for a player who has never opened the customizer, so
  * every consumer would otherwise have to spell out seven fallbacks - and one
@@ -86,17 +88,7 @@ const PROPORTION_RANGE: Record<keyof LegionProportions, readonly [number, number
  */
 export const resolveProportions = (
   raw: LegionProportions | null | undefined,
-): Required<LegionProportions> => {
-  const out = { ...DEFAULT_PROPORTIONS };
-  if (!raw) return out;
-  for (const key of Object.keys(DEFAULT_PROPORTIONS) as (keyof LegionProportions)[]) {
-    const value = raw[key];
-    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
-    const range = PROPORTION_RANGE[key];
-    out[key] = Math.min(Math.max(value, range[0]), range[1]);
-  }
-  return out;
-};
+): Required<LegionProportions> => clampAvatarProportions(raw);
 
 /**
  * The portal settings this game honours.

@@ -136,9 +136,15 @@ engine. Do not add a framework or a build tool without a concrete need.
 
 ## Assets
 
-- `assets/player/player.fbx` is the **canonical** player asset.
-- `assets/player/base_rig.fbx` is **byte-identical** to it. Do not load both and
-  do not create a second runtime player asset.
+- Characters are **Bloxity's own avatar body** (`static.bloxity.io/avatars/
+  player.glb`), assembled per player - see the Bloxity section. It carries the
+  same twelve bone names as the FBX, so the procedural animation drives it
+  unchanged, and it is scaled at load to the FBX's height.
+- `assets/player/player.fbx` is the **fallback** body, used only when Bloxity's
+  body cannot be fetched (boot waits 8s for it, then settles on the FBX for the
+  session). It is always loaded, so the game never depends on the CDN.
+- `assets/player/base_rig.fbx` is **byte-identical** to player.fbx. Do not load
+  both.
 - **Never modify the supplied FBX files.**
 - The FBX embeds **dead absolute texture paths** (`X:\legion\poxel\...`). Texture
   resolution is handled explicitly in `client/src/config/assets.ts` and
@@ -383,17 +389,50 @@ api.bloxity.io) - there is one code path, never a branch on environment.
   sensitivity to `MouseLook`. The portal never becomes a second owner of
   anything, and only settings with a real effect are registered, because
   registering a listener is also what makes a control appear in the portal menu.
-- Avatar application is ADDITIVE and its invariant is that DEFAULTS ARE
-  IDENTITY: every proportion is a multiplier around 1 applied to a rest pose
-  captured once, so a player who never opens the customizer gets exactly the
-  character this game shipped, and applying twice changes nothing. It writes
-  bone POSITION and SCALE only - rotation belongs to `PlayerRig.applyPose`,
-  which rebuilds it from the bind pose every frame.
-- Body-part meshes (`/parts/*.glb`) are deliberately NOT swapped in. This
-  game's body is one skinned FBX mesh bound to twelve bones, so there is no
-  head to hide and no socket to put a replacement in; swapping them would mean
-  replacing the character and its procedural animation, which is a different
-  feature, not a setting. Skin, hat and back ARE applied.
+- Avatar PROPORTIONS are additive and their defaults are identity: every one
+  is a multiplier around 1 applied to a rest pose captured once, so untouched
+  proportions leave the rig exactly as shipped, and applying twice changes
+  nothing. The layer writes bone POSITION and SCALE only - rotation belongs to
+  `PlayerRig.applyPose`, which rebuilds it from the bind pose every frame.
+- **A character is assembled exactly as the Bloxity SDK's own avatar renderer
+  (`createAvatarPreview` in legion-sdk.js) assembles one** - that renderer is
+  the ground truth, so read it before changing anything here:
+  - body: `player.glb`, one skeleton, six skinned part meshes named
+    `default_head`, `default_torso`, `default_arm_L/R`, `default_leg_L/R`;
+  - parts: the SDK's `headId` / `torsoId` / `armLId` / `armRId` / `legLId` /
+    `legRId` select `/avatars/parts/{head|torso}/{id}.glb` or
+    `/avatars/parts/{arms|legs}/{id}_{L|R}.glb`, swapped in as the matching
+    mesh's GEOMETRY with joint indices REMAPPED BY BONE NAME (a part lists its
+    own joints in its own order). A missing or failed part falls back to
+    Bloxity's default part for THAT slot only;
+  - skin: ONE atlas per player, drawn for those meshes' UVs, on that
+    character's own cloned material. It must NEVER go on player.fbx: the FBX
+    has different UVs, and wrapping the atlas round it is what put a face on a
+    leg. An unset skin (`-1`, empty) is Bloxity's default skin `0`
+    (`resolveBloxitySkin`); an id with no id-named file (the built-in Default
+    Skin, whose `assetPaths` texture is `skins/0.png`) also resolves to skin 0;
+  - hat on `Neck1` at y 0.8, back item on `Spine2`, textures with three's
+    DEFAULT flipY (OBJ UVs) - forcing `flipY = false` mirrors them;
+  - proportions: the SDK's bone formulas for height, arm length, head scale
+    and neck height. The SDK renderer does not apply shoulder width, leg
+    spacing or torso width; those three are the plain reading of their names
+    on the `*_Offset` joints and `Spine2`.
+  A guest's selection is read from `getGuest().avatar`: the SDK's own
+  `avatar.getEquipped()` reads only a logged-in user and reports `-1` for
+  everyone else.
+- Avatar ASSETS (`bloxity/BloxityAvatarAssets.ts`) are cached per asset as
+  promises: one download per file however many players wear it, and a failure
+  is remembered. Geometry, skins and accessory meshes are shared read-only;
+  materials, accessory nodes and bone shaping are per character.
+- Every character - local AND remote - is dressed by the same
+  `AvatarAppearance`. The local player's look comes from the SDK; a remote
+  player's from the replicated `legionAvatar` (`shared/config/avatarLook.ts`:
+  skin, hat, back, the six part ids and proportions - catalog IDS only, never
+  a model or texture - in one encoded string). It is cosmetic and
+  client-supplied like the name; the server only re-encodes it through the
+  shared parser, which drops unknown ids and clamps every proportion. Skin
+  textures are cached per id across characters, so a room of default avatars
+  is one texture.
 - **Bux never grants anything client-side.** The client names a SKU and the
   portal charges for it; the price lives in Bloxity's catalog keyed by game
   slug. What that SKU is worth in Wins is decided by the shared catalog in
@@ -424,7 +463,9 @@ api.bloxity.io) - there is one code path, never a branch on environment.
   `legionPfp` - is CLIENT-SUPPLIED AND COSMETIC, like a nickname. The server
   only cleans its shape. Nothing that decides an outcome may read any of them:
   the name labels a player, the id aims friend requests, the avatar is a
-  picture. All three go with the join, and again through `UpdateIdentity` when
+  picture. (`legionAvatar`, the look, follows the same rule and travels with
+  the join and through `UpdateAvatar`.) All three go with the join, and again
+  through `UpdateIdentity` when
   `onUserChanged` reports a real change, because a guest who logs in after
   joining would otherwise stay known to everyone by their guest name, with no
   account to befriend.

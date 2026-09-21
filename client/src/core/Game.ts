@@ -25,6 +25,7 @@ import {
   SPAWN_POSITION,
   SPAWN_ROTATION_Y,
   TRAIL_TIERS,
+  encodeAvatarLook,
   type RespawnMessage,
 } from '@obby/shared';
 import { AudioControls } from '../ui/AudioControls.js';
@@ -308,6 +309,7 @@ export class Game {
         // stand: releasing then would leave a visible cursor over the game.
         if (look.locked) look.release();
       },
+      setAvatarLook: (look) => this.network.setAvatarLook(look),
       updateIdentity: (name, userId, pfp) => {
         this.network.updateIdentity(name, userId, pfp);
         // The plate over this player's own head, which nobody else's state
@@ -343,6 +345,9 @@ export class Game {
       this.bloxityBridge.playerUserId,
       this.bloxityBridge.playerPfp,
     );
+    // Sent with the join, so everyone sees this player's Bloxity look from
+    // their very first frame rather than the bundled default.
+    this.network.setAvatarLook(encodeAvatarLook(this.bloxityBridge.avatarLook));
     await this.network.connect();
   }
 

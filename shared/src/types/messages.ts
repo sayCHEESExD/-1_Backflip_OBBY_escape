@@ -69,6 +69,17 @@ export interface UpdateIdentityMessage {
 }
 
 /**
+ * Client -> server: the player's Bloxity avatar look (MessageType.UpdateAvatar).
+ *
+ * Display data only, encoded by `encodeAvatarLook`. The server re-encodes it
+ * through `cleanAvatarLook` and replicates it so every other client can dress
+ * this player's character; nothing that decides an outcome reads it.
+ */
+export interface UpdateAvatarMessage {
+  legionAvatar: string;
+}
+
+/**
  * Client -> server: "I walked onto this boot's pedestal, buy it."
  *
  * A request, never a grant. The server checks the slot, the player's Wins and

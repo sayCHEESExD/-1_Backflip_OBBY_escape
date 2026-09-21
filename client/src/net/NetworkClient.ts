@@ -107,6 +107,8 @@ export class NetworkClient {
   private userId = '';
   /** Bloxity avatar URL sent with the join. Empty when the player has none. */
   private pfp = '';
+  /** Encoded Bloxity avatar look, sent with the join and on every change. */
+  private avatarLook = '';
   /** So a server too old to send boards is reported once, not every frame. */
   private missingBoardsLogged = false;
 
@@ -134,6 +136,17 @@ export class NetworkClient {
    *
    * Remembered for any later rejoin, and sent at once if already in a room.
    */
+  /**
+   * This player's Bloxity avatar look (`encodeAvatarLook`), for every other
+   * client to dress their character with. Cosmetic, like the identity. Held
+   * for the join, and sent at once when already connected and it changed.
+   */
+  setAvatarLook(look: string): void {
+    if (look === this.avatarLook) return;
+    this.avatarLook = look;
+    this.room?.send(MessageType.UpdateAvatar, { legionAvatar: look });
+  }
+
   updateIdentity(name: string, userId: string, pfp: string): void {
     this.setIdentity(name, userId, pfp);
     this.room?.send(MessageType.UpdateIdentity, {
@@ -243,6 +256,7 @@ export class NetworkClient {
           legionName: this.displayName,
           legionUserId: this.userId,
           legionPfp: this.pfp,
+          legionAvatar: this.avatarLook,
         });
         break;
       } catch (error) {

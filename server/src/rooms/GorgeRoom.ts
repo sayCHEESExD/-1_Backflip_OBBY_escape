@@ -6,6 +6,7 @@ import {
   PlayerAnimationState,
   SPAWN_POSITION,
   SPAWN_ROTATION_Y,
+  cleanAvatarLook,
   type ClaimTrophyMessage,
   type BuyAuraMessage,
   type BuyBootMessage,
@@ -15,6 +16,7 @@ import {
   type RebirthMessage,
   type HazardHitMessage,
   type UpdateIdentityMessage,
+  type UpdateAvatarMessage,
   type MoveMessage,
   type RespawnMessage,
   type RespawnReason,
@@ -63,8 +65,10 @@ const LEGION_NAME_MAX = 32;
  */
 const LEGION_USER_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
+// A display name, never a handle: a leading '@' is dropped so an @username can
+// never be replicated or persisted as the name a player is shown by.
 const cleanLegionName = (raw: unknown): string =>
-  typeof raw === 'string' ? raw.slice(0, LEGION_NAME_MAX).trim() : '';
+  typeof raw === 'string' ? raw.trim().replace(/^@+/, '').slice(0, LEGION_NAME_MAX).trim() : '';
 
 const cleanLegionUserId = (raw: unknown): string =>
   typeof raw === 'string' && LEGION_USER_ID.test(raw) ? raw : '';
@@ -176,6 +180,14 @@ export class GorgeRoom extends Room<GorgeState> {
       player.legionPfp = cleanLegionPfp(message?.legionPfp);
     });
 
+    // Cosmetic avatar look. Re-encoded through the shared parser, so only
+    // known id characters and clamped proportions are ever replicated.
+    this.onMessage(MessageType.UpdateAvatar, (client, message: UpdateAvatarMessage) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+      player.legionAvatar = cleanAvatarLook(message?.legionAvatar);
+    });
+
     this.onMessage(MessageType.HazardHit, (client, message: HazardHitMessage) => {
       this.handleHazardHit(client, message);
     });
@@ -227,6 +239,7 @@ export class GorgeRoom extends Room<GorgeState> {
       legionName?: string;
       legionUserId?: string;
       legionPfp?: string;
+      legionAvatar?: string;
     },
   ): void {
     const player = new PlayerState();
@@ -245,6 +258,7 @@ export class GorgeRoom extends Room<GorgeState> {
     player.legionName = cleanLegionName(options?.legionName);
     player.legionUserId = cleanLegionUserId(options?.legionUserId);
     player.legionPfp = cleanLegionPfp(options?.legionPfp);
+    player.legionAvatar = cleanAvatarLook(options?.legionAvatar);
 
     // Restore earned progression for a returning client, then let the derived
     // fields (cap, backflips, movement speed) follow from it.

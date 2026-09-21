@@ -155,13 +155,28 @@ class BloxitySdkFacade {
 
   // --- avatar -----------------------------------------------------------
 
+  /**
+   * What the player is wearing - signed in OR as a guest.
+   *
+   * The SDK's own `avatar.getEquipped()` reads only a logged-in user and
+   * reports `skinId: '-1'` for everybody else, which would dress every guest
+   * as the default avatar whatever they picked. A guest's selection lives on
+   * the guest identity instead, so that is where it is read from.
+   */
   getEquipped(): LegionEquipped {
-    return this.sdk?.avatar.getEquipped() ?? {};
+    if (!this.sdk) return {};
+    if (this.sdk.auth.getUser()) return this.sdk.avatar.getEquipped();
+    return this.getGuest()?.avatar ?? this.sdk.avatar.getEquipped();
   }
 
   /** Always seven numbers: the SDK returns `{}` before the player customises. */
   getProportions(): Required<LegionProportions> {
-    return resolveProportions(this.sdk?.avatar.getProportions());
+    if (!this.sdk) return resolveProportions(null);
+    // The SDK's live state first - it is what the customizer writes to. A
+    // guest whose state is still empty falls back to their saved selection.
+    const live = this.sdk.avatar.getProportions();
+    if (Object.keys(live ?? {}).length > 0 || this.sdk.auth.getUser()) return resolveProportions(live);
+    return resolveProportions(this.getGuest()?.avatar?.proportions);
   }
 
   async setProportions(partial: LegionProportions): Promise<void> {
@@ -391,3 +406,15 @@ class BloxitySdkFacade {
 }
 
 export const bloxity = new BloxitySdkFacade();
+
+/**
+ * The ONLY name a player is ever shown as: their Bloxity display name.
+ *
+ * Never the `username` handle (`@username-1234`) and never an internal id -
+ * an account with no display name set gets an empty string, and every caller
+ * treats empty as "no label" rather than reaching for the handle. A stray
+ * leading `@` is dropped so a handle pasted into a display name cannot read
+ * as one.
+ */
+export const visibleName = (person: { readonly displayName?: string | null } | null | undefined): string =>
+  (person?.displayName ?? '').trim().replace(/^@+/, '').trim();

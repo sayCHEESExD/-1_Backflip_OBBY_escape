@@ -16,6 +16,8 @@ export interface NetPlayerState extends PlayerMotionState {
   legionUserId: string;
   /** Bloxity avatar URL, shown beside the name. Empty when none. Cosmetic only. */
   legionPfp: string;
+  /** Encoded Bloxity avatar look (`encodeAvatarLook`). Empty = Bloxity default. */
+  legionAvatar?: string;
   x: number;
   y: number;
   z: number;

@@ -1,381 +1,353 @@
 import {
+  AVATAR_PART_SLOTS,
+  resolveBloxitySkin,
+  type AvatarLook,
+  type AvatarPartSlot,
+  type AvatarProportions,
+} from '@obby/shared';
+import {
   Group,
+  Matrix4,
   Mesh,
   MeshStandardMaterial,
-  NearestFilter,
-  Object3D,
-  SRGBColorSpace,
-  TextureLoader,
+  SkinnedMesh,
   Vector3,
   type Bone,
+  type BufferGeometry,
   type Texture,
 } from 'three';
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import type { BoneName } from '../animation/rig/boneNames.js';
 import type { PlayerCharacter } from '../player/PlayerCharacter.js';
+import { playerModelLoader } from '../player/PlayerModelLoader.js';
 import { logger } from '../util/logger.js';
-import { avatarUrls, isEquipped } from './bloxityConfig.js';
-import type { LegionEquipped, LegionProportions } from './sdkTypes.js';
+import { PART_MESH_NAMES, loadAccessory, loadPart, loadSkin } from './BloxityAvatarAssets.js';
 
 const SCOPE = 'BloxityAvatar';
 
-/** Which bone an accessory slot hangs from. */
+/** Which bone an accessory slot hangs from - the SDK's headBone and spineBone. */
 const HAT_BONE: BoneName = 'Neck1';
 const BACK_BONE: BoneName = 'Spine2';
 
-/** Bones whose rest transform the proportion layer rewrites. */
-const SHAPED_BONES: readonly BoneName[] = [
-  'ArmL1',
-  'ArmR1',
-  'LegL1',
-  'LegR1',
-  'Neck1',
-];
+/** Where the SDK seats a hat on the head bone, in body units. */
+const HAT_OFFSET_Y = 0.8;
 
+/** Rest transform of one bone, captured once so shaping never compounds. */
 interface BoneRest {
-  bone: Bone;
-  position: Vector3;
-  /** Unit vector from this bone toward its first child, in the bone's space. */
-  lengthAxis: Vector3;
-  /** Index (0/1/2) of the largest component of the rest position. */
-  outwardAxis: 0 | 1 | 2;
+  readonly bone: Bone;
+  readonly position: Vector3;
+  readonly scale: Vector3;
 }
 
 /**
- * Puts a player's Bloxity avatar onto the game's own character.
+ * Dresses ONE character - local or remote - in a player's Bloxity avatar.
  *
- * The canonical rig is a twelve-bone FBX driven entirely by procedural
- * animation, so this layer is deliberately ADDITIVE: it re-skins materials,
- * hangs accessories off bones and rewrites bone POSITION and SCALE. It never
- * writes a bone's rotation - that belongs to `PlayerRig.applyPose`, which
- * rebuilds every rotation from the bind pose each frame and would overwrite
- * anything written here anyway.
+ * On Bloxity's own body (`player.glb`, the normal case) the character is
+ * assembled exactly as the Bloxity SDK's avatar renderer assembles it:
  *
- * The design invariant is that DEFAULTS ARE IDENTITY. Every proportion is a
- * multiplier around 1 and every formula is `rest * value`, so a player who has
- * never opened the customizer gets a character that is byte-for-byte the one
- * this game already shipped. That is what makes it safe to run this on every
- * character unconditionally.
+ *   head / torso / arms / legs  each part mesh's geometry is the equipped
+ *                               part model, or Bloxity's default part for
+ *                               THAT slot only when none is equipped or its
+ *                               model cannot load
+ *   skin                        one atlas on this character's own material,
+ *                               drawn for these meshes' UVs; the body's own
+ *                               embedded default skin until it arrives
+ *   hat / back                  hung from Neck1 / Spine2 where the SDK hangs
+ *                               them
+ *   proportions                 the SDK's own bone formulas
  *
- * Body-part meshes (`/parts/...glb`) are NOT swapped in - see `applyEquipped`.
+ * Body parts, skins and accessories are shared, cached assets; everything
+ * PER CHARACTER - the material, the accessory nodes, the bone shaping - is
+ * this character's own, so no player can ever repaint or reshape another.
+ *
+ * Only bone POSITION and SCALE are written here, never rotation: rotation
+ * belongs to `PlayerRig.applyPose`, which rebuilds it from the bind pose every
+ * frame. That is why the procedural animation - run, jump, backflip - drives
+ * a Bloxity body exactly as it drove the FBX: the body carries the same
+ * twelve bone names.
+ *
+ * When Bloxity's body could not be loaded the character is the bundled FBX -
+ * the genuine fallback. That body keeps its own texture: a Bloxity skin atlas
+ * is laid out for Bloxity's meshes, and wrapping it round the FBX is what put
+ * a face on a leg.
  */
 export class AvatarAppearance {
   private readonly character: PlayerCharacter;
-  private readonly rests = new Map<BoneName, BoneRest>();
+  private readonly bloxityBody: boolean;
+
+  /** This character's own material, shared only by its own part meshes. */
+  private material: MeshStandardMaterial | null = null;
+  private readonly partMeshes = new Map<AvatarPartSlot, SkinnedMesh>();
+  private readonly defaultGeometry = new Map<AvatarPartSlot, BufferGeometry>();
+  private readonly boneNames: readonly string[];
+  private readonly rests = new Map<string, BoneRest>();
+  /** Bind-pose height of Neck_Offset, which the SDK's neck formula scales. */
+  private neckOffsetBindY = 0;
+  /** The rig's own Neck1 rest scale, for the FBX fallback's head size. */
+  private readonly neckRestScale: Vector3;
 
   private readonly hatSlot = new Group();
   private readonly backSlot = new Group();
 
-  /** This character's own material, cloned so a skin cannot leak to others. */
-  private material: MeshStandardMaterial | null = null;
-  private baseMap: Texture | null = null;
-  private skinTexture: Texture | null = null;
-  private skinId = '';
+  /** What is applied now, per field - a look is re-applied only where it changed. */
+  private skinId: string | null = null;
+  private readonly partIds = new Map<AvatarPartSlot, string>();
+  private hatId: string | null = null;
+  private backId: string | null = null;
+  private proportionsKey = '';
 
-  private hatId = '';
-  private backId = '';
-  private readonly loadedTextures: Texture[] = [];
+  /** Bumped per request, so a slow load never lands over a newer choice. */
+  private readonly generation = new Map<string, number>();
   private disposed = false;
 
   constructor(character: PlayerCharacter) {
     this.character = character;
+    const body = playerModelLoader.baseBody;
+    this.boneNames = body?.boneNames ?? [];
+
+    this.collectPartMeshes();
+    this.bloxityBody = body !== null && this.partMeshes.size === AVATAR_PART_SLOTS.length;
+    if (this.bloxityBody) this.ownMaterial(body?.defaultSkin ?? null);
     this.captureRests();
+    this.neckRestScale = this.character.rig.getBone('Neck1')?.scale.clone() ?? new Vector3(1, 1, 1);
     this.attachSlots();
   }
 
   /**
-   * Apply equipped cosmetics.
+   * Dress the character in a look.
    *
-   * Only the slots this game can honour are read. The portal also carries
-   * head/torso/arm/leg part meshes, and those are deliberately left alone:
-   * this game's body is ONE skinned FBX mesh bound to twelve bones, so there
-   * is no head to hide and no socket to put a replacement in. Swapping them
-   * would mean replacing the character and its whole procedural animation
-   * system, which is a different feature, not a setting.
+   * Idempotent and incremental: each field is compared with what is already
+   * applied, so re-applying the same look - every state patch does - costs a
+   * handful of string comparisons and loads nothing.
    */
-  applyEquipped(equipped: LegionEquipped): void {
+  applyLook(look: AvatarLook): void {
     if (this.disposed) return;
-    this.applySkin(equipped.skinId);
-    void this.applyAccessory('hat', equipped.hatId);
-    void this.applyAccessory('back', equipped.backId);
+    if (this.bloxityBody) {
+      this.applySkin(resolveBloxitySkin(look.skin));
+      for (const slot of AVATAR_PART_SLOTS) this.applyPart(slot, look.parts[slot]);
+    }
+    this.applyAccessory('hat', look.hat);
+    this.applyAccessory('back', look.back);
+    this.applyProportions(look.proportions);
   }
 
-  /**
-   * Apply body proportions.
-   *
-   * `height` is a whole-body scale and lives on the character's own avatar
-   * node; the rest are bone-local and are written as multiples of the rest
-   * pose captured at construction, so they compose rather than accumulate -
-   * calling this twice with the same values changes nothing.
-   */
-  applyProportions(p: Required<LegionProportions>): void {
-    if (this.disposed) return;
-
-    // Whole-body: height stretches vertically, torsoScaleX across. Both on the
-    // dedicated node so the death squash and the FBX unit scale are untouched.
-    this.character.avatarRoot.scale.set(p.torsoScaleX, p.height, 1);
-
-    // Arms out from the spine, and longer or shorter along their own axis.
-    this.shiftOutward('ArmL1', p.shoulderWidth);
-    this.shiftOutward('ArmR1', p.shoulderWidth);
-    this.stretchAlongLength('ArmL1', p.armLength);
-    this.stretchAlongLength('ArmR1', p.armLength);
-
-    // Legs apart. The portal's range runs negative, which crosses the legs
-    // over - that is the customizer's business, not something to clamp here.
-    this.shiftOutward('LegL1', p.legOffsetX);
-    this.shiftOutward('LegR1', p.legOffsetX);
-
-    // Neck raises the head; headScale sizes it. The neck is the last bone in
-    // its chain, so scaling it takes the head and anything hung off it - the
-    // hat included, which is exactly what a bigger head needs.
-    this.shiftAlongLength('Neck1', p.neckHeight);
-    this.setBoneScale('Neck1', p.headScale);
-
-    // The torso got wider, so undo that on the arms and the head, which are
-    // its children and would otherwise be squashed with it.
-    const inverse = p.torsoScaleX === 0 ? 1 : 1 / p.torsoScaleX;
-    this.counterScaleX('ArmL1', inverse);
-    this.counterScaleX('ArmR1', inverse);
-    this.counterScaleX('Neck1', inverse * p.headScale);
+  /** True when this character is Bloxity's body rather than the FBX fallback. */
+  get isBloxityBody(): boolean {
+    return this.bloxityBody;
   }
 
   dispose(): void {
     this.disposed = true;
     this.hatSlot.removeFromParent();
     this.backSlot.removeFromParent();
-    disposeChildren(this.hatSlot);
-    disposeChildren(this.backSlot);
-    for (const texture of this.loadedTextures) texture.dispose();
-    this.loadedTextures.length = 0;
+    this.hatSlot.clear();
+    this.backSlot.clear();
+    // Part geometries, skins and accessory meshes are shared caches and are
+    // NOT disposed with one character. Only this character's material is.
     this.material?.dispose();
     this.material = null;
   }
 
   // --- setup ------------------------------------------------------------
 
-  /**
-   * Record each shaped bone's bind transform once.
-   *
-   * Everything below is expressed against these, which is what makes the
-   * layer idempotent: without a rest to multiply, repeated writes would
-   * compound and a customizer slider would run away.
-   */
-  private captureRests(): void {
-    for (const name of SHAPED_BONES) {
-      const bone = this.character.rig.getBone(name);
-      if (!bone) continue;
-
-      const position = bone.position.clone();
-      const child = bone.children.find((c) => (c as Bone).isBone) ?? bone.children[0];
-      const lengthAxis =
-        child instanceof Object3D && child.position.lengthSq() > 1e-8
-          ? child.position.clone().normalize()
-          : new Vector3(0, 1, 0);
-
-      const abs = [Math.abs(position.x), Math.abs(position.y), Math.abs(position.z)];
-      const largest = abs[0] ?? 0;
-      let outwardAxis: 0 | 1 | 2 = 0;
-      if ((abs[1] ?? 0) > largest) outwardAxis = 1;
-      if ((abs[2] ?? 0) > Math.max(largest, abs[1] ?? 0)) outwardAxis = 2;
-
-      this.rests.set(name, { bone, position, lengthAxis, outwardAxis });
-    }
+  private collectPartMeshes(): void {
+    const wanted = new Map(Object.entries(PART_MESH_NAMES).map(([slot, name]) => [name.toLowerCase(), slot]));
+    this.character.modelRoot.traverse((child) => {
+      if (!(child instanceof SkinnedMesh)) return;
+      const slot = wanted.get(child.name.toLowerCase()) as AvatarPartSlot | undefined;
+      if (!slot || this.partMeshes.has(slot)) return;
+      this.partMeshes.set(slot, child);
+      this.defaultGeometry.set(slot, child.geometry);
+    });
   }
 
-  /** Empty groups on the head and back bones, ready for a mesh to drop into. */
+  /** Give this character a material of its own, starting on `skin`. */
+  private ownMaterial(skin: Texture | null): void {
+    let material: MeshStandardMaterial | null = null;
+    this.character.modelRoot.traverse((child) => {
+      if (!(child instanceof Mesh)) return;
+      const shared = child.material;
+      if (Array.isArray(shared) || !(shared instanceof MeshStandardMaterial)) return;
+      material ??= shared.clone();
+      child.material = material;
+    });
+    // Assigned inside the traversal callback, which TypeScript cannot see.
+    const owned = material as MeshStandardMaterial | null;
+    this.material = owned;
+    if (owned && skin) owned.map = skin;
+  }
+
+  /**
+   * Record every bone's bind position and scale once.
+   *
+   * Everything below is written as `rest * value`, so re-applying proportions
+   * never compounds and a customizer slider cannot run away.
+   */
+  private captureRests(): void {
+    let skeleton: SkinnedMesh['skeleton'] | null = null;
+    this.character.modelRoot.traverse((child) => {
+      if (child instanceof SkinnedMesh) skeleton ??= child.skeleton;
+    });
+    const bones = (skeleton as SkinnedMesh['skeleton'] | null)?.bones ?? [];
+    for (const bone of bones) {
+      if (this.rests.has(bone.name)) continue;
+      this.rests.set(bone.name, { bone, position: bone.position.clone(), scale: bone.scale.clone() });
+    }
+    const neck = bones.findIndex((bone) => bone.name === 'Neck_Offset');
+    const inverse = (skeleton as SkinnedMesh['skeleton'] | null)?.boneInverses[neck];
+    if (inverse) this.neckOffsetBindY = new Matrix4().copy(inverse).invert().elements[13] ?? 0;
+  }
+
   private attachSlots(): void {
-    const hatBone = this.character.rig.getBone(HAT_BONE);
-    const backBone = this.character.rig.getBone(BACK_BONE);
-    hatBone?.add(this.hatSlot);
-    backBone?.add(this.backSlot);
+    this.character.rig.getBone(HAT_BONE)?.add(this.hatSlot);
+    this.character.rig.getBone(BACK_BONE)?.add(this.backSlot);
+    if (this.bloxityBody) this.hatSlot.position.set(0, HAT_OFFSET_Y, 0);
+  }
+
+  private nextGeneration(key: string): number {
+    const next = (this.generation.get(key) ?? 0) + 1;
+    this.generation.set(key, next);
+    return next;
+  }
+
+  private isCurrent(key: string, generation: number): boolean {
+    return !this.disposed && this.generation.get(key) === generation;
   }
 
   // --- skin -------------------------------------------------------------
 
   /**
-   * Swap the body texture.
+   * Put a skin atlas on this character's own material.
    *
-   * The model loader hands every character ONE shared material on purpose, so
-   * writing a skin into it would put this player's avatar on everybody in the
-   * room. The first skin change clones it for this character alone.
+   * Until it arrives the character wears the body's embedded default skin -
+   * Bloxity's own default look, never a local texture.
    */
-  private applySkin(id: string | null | undefined): void {
-    const next = isEquipped(id) ? id : '';
-    if (next === this.skinId) return;
-    this.skinId = next;
-
-    if (!this.material && !this.cloneMaterial()) return;
-    const material = this.material;
-    if (!material) return;
-
-    if (!next) {
-      material.map = this.baseMap;
-      material.needsUpdate = true;
-      return;
-    }
-
-    new TextureLoader().load(
-      avatarUrls.skinTexture(next),
-      (texture) => {
-        if (this.disposed || this.skinId !== next) {
-          texture.dispose();
-          return;
-        }
-        texture.colorSpace = SRGBColorSpace;
-        texture.flipY = false;
-        // Match the game's own player atlas: this is a blocky, low-res style
-        // and smoothing the skin would make it the one soft thing on screen.
-        texture.magFilter = NearestFilter;
-        texture.needsUpdate = true;
-        this.skinTexture?.dispose();
-        this.skinTexture = texture;
-        this.loadedTextures.push(texture);
-        material.map = texture;
-        material.needsUpdate = true;
-        logger.info(SCOPE, `skin applied id=${next}`);
-      },
-      undefined,
-      () => logger.warn(SCOPE, `skin texture missing id=${next}`),
-    );
+  private applySkin(id: string): void {
+    if (id === this.skinId) return;
+    this.skinId = id;
+    const generation = this.nextGeneration('skin');
+    void loadSkin(id).then((texture) => {
+      if (!this.isCurrent('skin', generation) || !texture || !this.material) return;
+      this.material.map = texture;
+      this.material.needsUpdate = true;
+      logger.info(SCOPE, `skin ${id} applied`);
+    });
   }
 
-  /** Give this character its own material. @returns false if there is none. */
-  private cloneMaterial(): boolean {
-    let found: MeshStandardMaterial | null = null;
-    this.character.modelRoot.traverse((child) => {
-      if (!(child instanceof Mesh)) return;
-      const material = child.material;
-      if (Array.isArray(material) || !(material instanceof MeshStandardMaterial)) return;
-      found ??= material.clone();
-      child.material = found;
+  // --- body parts -------------------------------------------------------
+
+  /**
+   * Fill one body-part slot.
+   *
+   * The equipped part's model when it loads; otherwise Bloxity's default part
+   * for THIS slot only - one missing leg never costs the player their head.
+   */
+  private applyPart(slot: AvatarPartSlot, id: string): void {
+    if (this.partIds.get(slot) === id) return;
+    this.partIds.set(slot, id);
+    const mesh = this.partMeshes.get(slot);
+    const fallback = this.defaultGeometry.get(slot);
+    if (!mesh || !fallback) return;
+    const key = `part:${slot}`;
+    const generation = this.nextGeneration(key);
+    if (!id) {
+      mesh.geometry = fallback;
+      return;
+    }
+    void loadPart(slot, id, this.boneNames).then((geometry) => {
+      if (!this.isCurrent(key, generation)) return;
+      mesh.geometry = geometry ?? fallback;
+      if (geometry) logger.info(SCOPE, `${slot} part ${id} applied`);
     });
-    if (!found) return false;
-    this.material = found;
-    this.baseMap = (found as MeshStandardMaterial).map;
-    return true;
   }
 
   // --- accessories ------------------------------------------------------
 
-  /** Load and hang a hat or a back item, or clear the slot when unequipped. */
-  private async applyAccessory(
-    kind: 'hat' | 'back',
-    id: string | null | undefined,
-  ): Promise<void> {
+  /** Hang a hat or back item, or clear the slot when unequipped. */
+  private applyAccessory(kind: 'hat' | 'back', id: string): void {
+    if ((kind === 'hat' ? this.hatId : this.backId) === id) return;
+    if (kind === 'hat') this.hatId = id;
+    else this.backId = id;
+
     const slot = kind === 'hat' ? this.hatSlot : this.backSlot;
-    const next = isEquipped(id) ? id : '';
-    if (kind === 'hat' ? next === this.hatId : next === this.backId) return;
-    if (kind === 'hat') this.hatId = next;
-    else this.backId = next;
+    const generation = this.nextGeneration(kind);
+    slot.clear();
+    if (!id) return;
 
-    disposeChildren(slot);
-    if (!next) return;
-
-    const meshUrl = kind === 'hat' ? avatarUrls.hatMesh(next) : avatarUrls.backMesh(next);
-    const textureUrl =
-      kind === 'hat' ? avatarUrls.hatTexture(next) : avatarUrls.backTexture(next);
-
-    try {
-      const object = await new OBJLoader().loadAsync(meshUrl);
-      // Equipped again while this was in flight - the newer request wins.
-      if (this.disposed || (kind === 'hat' ? this.hatId : this.backId) !== next) return;
-
-      const texture = await loadTextureOrNull(textureUrl);
-      if (texture) this.loadedTextures.push(texture);
-
-      const material = new MeshStandardMaterial({
-        map: texture,
-        roughness: 0.85,
-        metalness: 0,
-      });
-      object.traverse((child) => {
-        if (!(child instanceof Mesh)) return;
-        child.material = material;
-        child.castShadow = true;
-        // Skinned-parent bounds are unreliable, exactly as for the body.
-        child.frustumCulled = false;
-      });
-
+    void loadAccessory(kind, id).then((object) => {
+      if (!this.isCurrent(kind, generation) || !object) return;
+      slot.clear();
       slot.add(object);
-      logger.info(SCOPE, `${kind} applied id=${next}`);
-    } catch {
-      logger.warn(SCOPE, `${kind} mesh missing id=${next}`);
+      logger.info(SCOPE, `${kind} ${id} applied`);
+    });
+  }
+
+  // --- proportions ------------------------------------------------------
+
+  /**
+   * Shape the body.
+   *
+   * On Bloxity's body this is the SDK renderer's own formula for height, arm
+   * length, head size and neck height. The SDK renderer does not apply
+   * shoulder width, leg spacing or torso width, so those three are applied by
+   * the plainest reading of their names: arms and legs spread along their
+   * offset joints, the chest widened without widening what hangs from it.
+   */
+  private applyProportions(p: AvatarProportions): void {
+    const key = Object.values(p).join(',');
+    if (key === this.proportionsKey) return;
+    this.proportionsKey = key;
+
+    if (!this.bloxityBody) {
+      this.applyFallbackProportions(p);
+      return;
+    }
+
+    for (const rest of this.rests.values()) {
+      rest.bone.position.copy(rest.position);
+      rest.bone.scale.copy(rest.scale);
+    }
+
+    const h = p.height;
+    const hs = p.headScale;
+    // Height is a whole-body stretch on the character's own avatar node.
+    this.character.avatarRoot.scale.set(1, h, 1);
+
+    for (const rest of this.rests.values()) {
+      const { bone, position: op, scale: os } = rest;
+      const name = bone.name;
+      if (name.startsWith('Arm')) bone.scale.y = os.y * p.armLength;
+      if (name === 'Neck_Offset') {
+        bone.position.y += (h - hs) * op.y;
+        bone.position.y += this.neckOffsetBindY * (p.neckHeight - 1) * 0.8;
+      }
+      if (name === 'Neck1') {
+        bone.scale.set(os.x * hs, os.y * (hs / h), os.z * hs);
+      }
+      if (name === 'ArmL_Offset' || name === 'ArmR_Offset') {
+        bone.position.x = op.x * p.shoulderWidth;
+      }
+      if (name === 'LegL_Offset' || name === 'LegR_Offset') {
+        bone.position.x = op.x * p.legOffsetX;
+      }
+    }
+
+    // Torso width: widen the chest, then undo it on the arms and the neck so
+    // only the torso itself gets wider while they ride out with its edge.
+    const spine = this.rests.get('Spine2');
+    if (spine) spine.bone.scale.x = spine.scale.x * p.torsoScaleX;
+    const inverse = p.torsoScaleX === 0 ? 1 : 1 / p.torsoScaleX;
+    for (const name of ['ArmL_Offset', 'ArmR_Offset', 'Neck_Offset']) {
+      const rest = this.rests.get(name);
+      if (rest) rest.bone.scale.x = rest.bone.scale.x * inverse;
     }
   }
 
-  // --- bone shaping -----------------------------------------------------
-
-  /** Move a bone further from or closer to the body's centre line. */
-  private shiftOutward(name: BoneName, factor: number): void {
-    const rest = this.rests.get(name);
-    if (!rest) return;
-    rest.bone.position.copy(rest.position);
-    const axis = rest.outwardAxis;
-    const component = axis === 0 ? rest.position.x : axis === 1 ? rest.position.y : rest.position.z;
-    const shifted = component * factor;
-    if (axis === 0) rest.bone.position.x = shifted;
-    else if (axis === 1) rest.bone.position.y = shifted;
-    else rest.bone.position.z = shifted;
-  }
-
-  /** Move a bone along the axis pointing at its child - a longer neck. */
-  private shiftAlongLength(name: BoneName, factor: number): void {
-    const rest = this.rests.get(name);
-    if (!rest) return;
-    const extra = rest.lengthAxis.clone().multiplyScalar((factor - 1) * rest.position.length());
-    rest.bone.position.copy(rest.position).add(extra);
-  }
-
-  /** Stretch a limb along its own length without thickening it. */
-  private stretchAlongLength(name: BoneName, factor: number): void {
-    const rest = this.rests.get(name);
-    if (!rest) return;
-    const a = rest.lengthAxis;
-    rest.bone.scale.set(
-      1 + (factor - 1) * Math.abs(a.x),
-      1 + (factor - 1) * Math.abs(a.y),
-      1 + (factor - 1) * Math.abs(a.z),
-    );
-  }
-
-  private setBoneScale(name: BoneName, factor: number): void {
-    this.rests.get(name)?.bone.scale.setScalar(factor);
-  }
-
-  /** Cancel a parent's X scale on one child, so only the parent widens. */
-  private counterScaleX(name: BoneName, factor: number): void {
-    const rest = this.rests.get(name);
-    if (!rest) return;
-    rest.bone.scale.x *= factor;
+  /**
+   * Proportions on the FBX fallback body, which has no offset joints: height
+   * and head size only, the two that read unambiguously on any rig.
+   */
+  private applyFallbackProportions(p: AvatarProportions): void {
+    this.character.avatarRoot.scale.set(1, p.height, 1);
+    this.character.rig.getBone('Neck1')?.scale.copy(this.neckRestScale).multiplyScalar(p.headScale);
   }
 }
-
-const disposeChildren = (group: Group): void => {
-  for (const child of [...group.children]) {
-    child.traverse((node) => {
-      if (!(node instanceof Mesh)) return;
-      node.geometry.dispose();
-      const material = node.material;
-      if (Array.isArray(material)) material.forEach((m) => m.dispose());
-      else material.dispose();
-    });
-    group.remove(child);
-  }
-};
-
-/** A missing accessory texture is normal - the mesh still renders untextured. */
-const loadTextureOrNull = (url: string): Promise<Texture | null> =>
-  new Promise((resolve) => {
-    new TextureLoader().load(
-      url,
-      (texture) => {
-        texture.colorSpace = SRGBColorSpace;
-        texture.flipY = false;
-        texture.magFilter = NearestFilter;
-        resolve(texture);
-      },
-      undefined,
-      () => resolve(null),
-    );
-  });

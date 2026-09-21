@@ -24,9 +24,17 @@ import {
   PLAYER_TEXTURE_SETTINGS,
   TEXTURE_REMAP,
 } from '../config/assets.js';
+import { loadBaseBody, type BloxityBaseBody } from '../bloxity/BloxityAvatarAssets.js';
 import { logger } from '../util/logger.js';
 
 const SCOPE = 'PlayerModelLoader';
+
+/**
+ * How long boot waits for Bloxity's avatar body before settling on the
+ * bundled FBX for the session. It is a 27 KB file, so this only ever bites
+ * when the CDN is unreachable.
+ */
+const BASE_BODY_TIMEOUT_MS = 8000;
 
 const IMAGE_EXTENSIONS = /\.(png|jpg|jpeg|tga|bmp|gif|webp)$/i;
 
@@ -66,6 +74,8 @@ export class PlayerModelLoader {
   private material: MeshStandardMaterial | null = null;
   private report: PlayerModelReport | null = null;
   private loadPromise: Promise<PlayerModelReport> | null = null;
+  /** Bloxity's avatar body, when it loaded. Null means the FBX is in use. */
+  private bloxityBody: BloxityBaseBody | null = null;
 
   private readonly remapLog: Array<{ requested: string; served: string }> = [];
 
@@ -90,11 +100,22 @@ export class PlayerModelLoader {
    * with the first for no gameplay benefit.
    */
   createInstance(): Object3D {
+    if (this.bloxityBody) return cloneSkeleton(this.bloxityBody.prototype);
     if (!this.prototype) {
       throw new Error('PlayerModelLoader.createInstance() called before load() resolved');
     }
 
     return cloneSkeleton(this.prototype);
+  }
+
+  /**
+   * Bloxity's avatar body, or null when characters are the bundled FBX.
+   *
+   * Every character is built from the SAME body for the whole session, so the
+   * avatar layer can rely on one skeleton layout and one set of part meshes.
+   */
+  get baseBody(): BloxityBaseBody | null {
+    return this.bloxityBody;
   }
 
   private async doLoad(): Promise<PlayerModelReport> {
@@ -123,6 +144,21 @@ export class PlayerModelLoader {
     this.prototype = fbx;
 
     this.logReport(this.report);
+
+    // Bloxity's own avatar body - what every player actually looks like on
+    // Bloxity - scaled to the FBX's height so the camera, the name plate and
+    // the collision the game was tuned around see no difference. The FBX
+    // stays loaded as the fallback when the body cannot be fetched.
+    const timeout = new Promise<null>((resolve) =>
+      window.setTimeout(() => resolve(null), BASE_BODY_TIMEOUT_MS),
+    );
+    this.bloxityBody = await Promise.race([loadBaseBody(this.report.heightWorldUnits), timeout]);
+    logger.info(
+      SCOPE,
+      this.bloxityBody
+        ? 'characters use the Bloxity avatar body'
+        : 'Bloxity avatar body unavailable - characters use the bundled player.fbx',
+    );
     return this.report;
   }
 

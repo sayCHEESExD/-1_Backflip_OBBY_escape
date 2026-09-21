@@ -1,6 +1,7 @@
 import { logger } from '../util/logger.js';
 import { AvatarAppearance } from './AvatarAppearance.js';
-import { bloxity } from './BloxitySdk.js';
+import { encodeAvatarLook, type AvatarLook } from '@obby/shared';
+import { bloxity, visibleName } from './BloxitySdk.js';
 import { BloxityPanel, type RoomPlayer } from './BloxityPanel.js';
 import { SETTING_KEYS, settingBool, settingNumber } from './bloxityConfig.js';
 import type { LegionUser, Unsubscribe } from './sdkTypes.js';
@@ -38,6 +39,8 @@ export interface BloxityHost {
   setPortalPointerLock(locked: boolean): void;
   /** Tell the room who this player is now, e.g. after a login. Cosmetic only. */
   updateIdentity(name: string, userId: string, pfp: string): void;
+  /** Tell the room how this player is dressed now (`encodeAvatarLook`). Cosmetic only. */
+  setAvatarLook(look: string): void;
   /** Everyone else in the room right now. */
   getRoomPlayers(): readonly RoomPlayer[];
 }
@@ -120,9 +123,10 @@ export class BloxityBridge {
    */
   get playerName(): string {
     const user = bloxity.getUser();
-    if (user) return user.displayName || user.username;
-    const guest = bloxity.getGuest();
-    return guest?.displayName || guest?.username || '';
+    // Display name only. A signed-in account without one stays unnamed rather
+    // than being shown by its @handle.
+    if (user) return visibleName(user);
+    return visibleName(bloxity.getGuest());
   }
 
   /** The signed-in account's id, or empty for a guest. Read through, never cached. */
@@ -175,7 +179,7 @@ export class BloxityBridge {
       bloxity.onUserChanged((user: LegionUser | null) => {
         logger.info(
           SCOPE,
-          user ? `signed in as @${user.username}` : 'signed out (playing as guest)',
+          user ? `signed in as "${visibleName(user)}"` : 'signed out (playing as guest)',
         );
         // Identity decides the avatar, the friends list and the balance, so
         // they are all refreshed from this one place rather than separately.
@@ -291,13 +295,43 @@ export class BloxityBridge {
 
   // --- avatar -----------------------------------------------------------
 
-  /** Push the current equipped items and proportions onto the character. */
+  /**
+   * The player's current Bloxity look - skin, hat, back, proportions - read
+   * through the SDK every time, never cached. Signed in or guest alike.
+   */
+  get avatarLook(): AvatarLook {
+    const equipped = bloxity.getEquipped();
+    return {
+      skin: equipped.skinId ?? '',
+      hat: equipped.hatId ?? '',
+      back: equipped.backId ?? '',
+      // Which Bloxity body-part model fills each slot - the SDK's own fields.
+      parts: {
+        head: equipped.headId ?? '',
+        torso: equipped.torsoId ?? '',
+        armL: equipped.armLId ?? '',
+        armR: equipped.armRId ?? '',
+        legL: equipped.legLId ?? '',
+        legR: equipped.legRId ?? '',
+      },
+      proportions: bloxity.getProportions(),
+    };
+  }
+
+  /**
+   * Dress the local character in the player's Bloxity look, and tell the
+   * room, so every other client dresses them identically.
+   *
+   * Runs after the character's own material exists, so nothing the model
+   * loader set up can overwrite it afterwards.
+   */
   private applyAvatar(): void {
+    const look = this.avatarLook;
+    this.host.setAvatarLook(encodeAvatarLook(look));
     const character = this.host.getCharacterForAvatar();
     if (!character) return;
     this.avatar ??= new AvatarAppearance(character);
-    this.avatar.applyEquipped(bloxity.getEquipped());
-    this.avatar.applyProportions(bloxity.getProportions());
+    this.avatar.applyLook(look);
   }
 }
 

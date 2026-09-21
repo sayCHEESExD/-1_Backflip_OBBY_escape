@@ -50,6 +50,17 @@ export class PlayerState extends Schema {
    */
   @type('string') legionPfp = '';
 
+  /**
+   * The player's Bloxity avatar look - skin, hat, back and proportions - as
+   * one encoded string (`shared/config/avatarLook.ts`).
+   *
+   * Client-supplied and COSMETIC: it dresses this character on everyone
+   * else's screen and nothing more. The room only re-encodes it through the
+   * shared parser, which drops unknown ids and clamps every proportion.
+   * Empty means Bloxity's default avatar.
+   */
+  @type('string') legionAvatar = '';
+
   @type('float32') x: number = SPAWN_POSITION.x;
   @type('float32') y: number = SPAWN_POSITION.y;
   @type('float32') z: number = SPAWN_POSITION.z;

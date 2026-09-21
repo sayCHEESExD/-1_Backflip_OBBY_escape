@@ -55,6 +55,11 @@ export const MessageType = {
    * Nothing gameplay reads either field.
    */
   UpdateIdentity: 'updateIdentity',
+  /**
+   * Client -> server: the player's Bloxity avatar look changed. Cosmetic, like
+   * the identity - see `shared/config/avatarLook.ts`.
+   */
+  UpdateAvatar: 'updateAvatar',
   /** Client -> server: request to buy the boot the player is standing on. */
   BuyBoot: 'buyBoot',
   /** Client -> server: request a rebirth. */

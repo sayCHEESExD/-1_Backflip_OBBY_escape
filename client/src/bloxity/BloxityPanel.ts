@@ -2,7 +2,7 @@ import { BUX_PRODUCTS } from '@obby/shared';
 import { getPlayerId } from '../net/NetworkClient.js';
 import { modalLayer } from '../ui/ModalLayer.js';
 import { logger } from '../util/logger.js';
-import { bloxity } from './BloxitySdk.js';
+import { bloxity, visibleName } from './BloxitySdk.js';
 import type { LegionFriend, LegionUser } from './sdkTypes.js';
 
 const SCOPE = 'BloxityPanel';
@@ -225,7 +225,7 @@ export class BloxityPanel {
     names.className = 'obby-blox__names';
     const primary = document.createElement('div');
     primary.className = 'obby-blox__name';
-    primary.textContent = displayNameOf(user) || guest?.displayName || guest?.username || 'Guest';
+    primary.textContent = (user ? visibleName(user) : visibleName(guest)) || (user ? 'Bloxity player' : 'Guest');
     const secondary = document.createElement('div');
     secondary.className = 'obby-blox__handle';
     // The account's own handle is not shown: a player is their DISPLAY NAME
@@ -310,7 +310,7 @@ export class BloxityPanel {
       names.className = 'obby-blox__names';
       const primary = document.createElement('div');
       primary.className = 'obby-blox__name';
-      primary.textContent = friend.displayName || friend.username;
+      primary.textContent = visibleName(friend) || 'Bloxity friend';
       const status = document.createElement('div');
       status.className = `obby-blox__status obby-blox__status--${presenceClass(friend)}`;
       status.textContent = presenceLabel(friend);
@@ -322,8 +322,8 @@ export class BloxityPanel {
           const ok = await bloxity.inviteFriend(friend._id);
           this.say(
             ok
-              ? `Invited ${friend.displayName || friend.username}.`
-              : `Could not invite ${friend.displayName || friend.username}.`,
+              ? `Invited ${visibleName(friend) || 'your friend'}.`
+              : `Could not invite ${visibleName(friend) || 'your friend'}.`,
           );
         }),
       );
@@ -473,8 +473,7 @@ export class BloxityPanel {
 
 // --- helpers ------------------------------------------------------------
 
-const displayNameOf = (user: LegionUser | null): string =>
-  user ? user.displayName || user.username : '';
+const displayNameOf = (user: LegionUser | null): string => visibleName(user) || 'player';
 
 const presenceClass = (friend: LegionFriend): string => {
   const status = friend.presence?.status ?? 'offline';

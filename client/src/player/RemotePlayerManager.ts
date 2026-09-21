@@ -1,4 +1,6 @@
+import { parseAvatarLook } from '@obby/shared';
 import type { Scene } from 'three';
+import { AvatarAppearance } from '../bloxity/AvatarAppearance.js';
 import type { NetPlayerState } from '../net/netTypes.js';
 import { logger } from '../util/logger.js';
 import { RemotePlayer } from './RemotePlayer.js';
@@ -12,6 +14,12 @@ const SCOPE = 'RemotePlayerManager';
 export class RemotePlayerManager {
   private readonly scene: Scene;
   private readonly players = new Map<string, RemotePlayer>();
+  /**
+   * Each remote player's Bloxity look, and the layer that dresses them in it.
+   * The same `AvatarAppearance` the local player uses, fed from replicated
+   * state instead of the SDK - so every client dresses a given player alike.
+   */
+  private readonly avatars = new Map<string, { appearance: AvatarAppearance; look: string }>();
 
   private localSessionId: string | null = null;
 
@@ -45,6 +53,7 @@ export class RemotePlayerManager {
     // same player - and a player with no Bloxity name gets no plate at all.
     player.character.setDisplayName(state.legionName ?? '');
     this.players.set(sessionId, player);
+    this.applyLook(sessionId, player, state.legionAvatar);
 
     logger.info(SCOPE, `remote player added: ${sessionId} (total ${this.players.size})`);
   }
@@ -68,11 +77,33 @@ export class RemotePlayerManager {
     // being their guest name on everyone else's screen. `setDisplayName`
     // returns early when it has not changed, so this costs nothing per patch.
     player.character.setDisplayName(state.legionName ?? '');
+    this.applyLook(sessionId, player, state.legionAvatar);
+  }
+
+  /**
+   * Dress a remote character in their replicated Bloxity look.
+   *
+   * An empty look is NOT "use the bundled texture": it parses to Bloxity's
+   * default avatar, exactly as it would for the local player. Re-applied only
+   * when the encoded string changes, so an idle patch costs a comparison.
+   */
+  private applyLook(sessionId: string, player: RemotePlayer, encoded: string | undefined): void {
+    const look = encoded ?? '';
+    let entry = this.avatars.get(sessionId);
+    if (entry && entry.look === look) return;
+    if (!entry) {
+      entry = { appearance: new AvatarAppearance(player.character), look };
+      this.avatars.set(sessionId, entry);
+    }
+    entry.look = look;
+    entry.appearance.applyLook(parseAvatarLook(look));
   }
 
   remove(sessionId: string): void {
     const player = this.players.get(sessionId);
     if (!player) return;
+    this.avatars.get(sessionId)?.appearance.dispose();
+    this.avatars.delete(sessionId);
     player.dispose();
     this.players.delete(sessionId);
     logger.info(SCOPE, `remote player removed: ${sessionId} (total ${this.players.size})`);
@@ -96,6 +127,8 @@ export class RemotePlayerManager {
   }
 
   dispose(): void {
+    for (const entry of this.avatars.values()) entry.appearance.dispose();
+    this.avatars.clear();
     for (const player of this.players.values()) player.dispose();
     this.players.clear();
   }
