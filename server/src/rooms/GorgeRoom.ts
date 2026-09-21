@@ -14,6 +14,7 @@ import {
   type EquipTrailMessage,
   type RebirthMessage,
   type HazardHitMessage,
+  type UpdateIdentityMessage,
   type MoveMessage,
   type RespawnMessage,
   type RespawnReason,
@@ -47,6 +48,51 @@ const SCOPE = 'GorgeRoom';
  * framework already owns, and the two would eventually disagree.
  */
 const MAX_CLIENTS = 15;
+
+/** Longest Bloxity display name drawn on another player's screen. */
+const LEGION_NAME_MAX = 32;
+
+/**
+ * The shape a Bloxity account id may take.
+ *
+ * Deliberately permissive rather than pinned to one id format: the platform's
+ * user-id format is not documented, and a pattern stricter than the real ids
+ * would silently blank every one and hide the friend-request button for
+ * everybody. This only stops junk and oversized strings reaching other
+ * players' state.
+ */
+const LEGION_USER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+const cleanLegionName = (raw: unknown): string =>
+  typeof raw === 'string' ? raw.slice(0, LEGION_NAME_MAX).trim() : '';
+
+const cleanLegionUserId = (raw: unknown): string =>
+  typeof raw === 'string' && LEGION_USER_ID.test(raw) ? raw : '';
+
+/** Hosts a replicated avatar URL may point at: bloxity.io and its subdomains. */
+const LEGION_ASSET_HOST = /(^|\.)bloxity\.io$/i;
+
+/**
+ * Clean a replicated avatar URL.
+ *
+ * Stricter than the other two fields because this one is FETCHED rather than
+ * drawn: every other client's browser loads it. An arbitrary URL here would
+ * let one player point everybody else's browser at anything they liked - a
+ * tracking pixel that harvests IP addresses, or an endpoint that counts who
+ * is in the room. Only https on Bloxity's own hosts gets through.
+ */
+const cleanLegionPfp = (raw: unknown): string => {
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > 300) return '';
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:') return '';
+    if (!LEGION_ASSET_HOST.test(url.hostname)) return '';
+    return url.toString();
+  } catch {
+    // Not a URL at all.
+    return '';
+  }
+};
 
 /**
  * Seconds between background saves of every connected player.
@@ -119,6 +165,17 @@ export class GorgeRoom extends Room<GorgeState> {
       if (player) this.respawn(client.sessionId, player, 'manual');
     });
 
+    // Cosmetic identity only - a display name and a Bloxity account id. A guest
+    // who logs in after joining would otherwise stay known to everyone else by
+    // their guest name, with no account to befriend.
+    this.onMessage(MessageType.UpdateIdentity, (client, message: UpdateIdentityMessage) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+      player.legionName = cleanLegionName(message?.legionName);
+      player.legionUserId = cleanLegionUserId(message?.legionUserId);
+      player.legionPfp = cleanLegionPfp(message?.legionPfp);
+    });
+
     this.onMessage(MessageType.HazardHit, (client, message: HazardHitMessage) => {
       this.handleHazardHit(client, message);
     });
@@ -165,7 +222,12 @@ export class GorgeRoom extends Room<GorgeState> {
 
   override onJoin(
     client: Client,
-    options?: { playerId?: string; legionName?: string },
+    options?: {
+      playerId?: string;
+      legionName?: string;
+      legionUserId?: string;
+      legionPfp?: string;
+    },
   ): void {
     const player = new PlayerState();
     player.sessionId = client.sessionId;
@@ -177,10 +239,12 @@ export class GorgeRoom extends Room<GorgeState> {
     this.trails.initialise(player);
     this.auras.initialise(player);
 
-    // Trimmed and capped: it is drawn on other players' screens, so an
-    // unbounded string would be somebody else's problem to render.
-    player.legionName =
-      typeof options?.legionName === 'string' ? options.legionName.slice(0, 32).trim() : '';
+    // Trimmed, capped and shape-checked: both are drawn or acted on by other
+    // players' clients, so an unbounded string would be somebody else's problem
+    // to render. `UpdateIdentity` runs the same cleaning for a later login.
+    player.legionName = cleanLegionName(options?.legionName);
+    player.legionUserId = cleanLegionUserId(options?.legionUserId);
+    player.legionPfp = cleanLegionPfp(options?.legionPfp);
 
     // Restore earned progression for a returning client, then let the derived
     // fields (cap, backflips, movement speed) follow from it.
@@ -584,18 +648,19 @@ export class GorgeRoom extends Room<GorgeState> {
   /** Copy ranked rows into a replicated array. @returns true if anything moved. */
   private applyBoard(
     target: ArraySchema<LeaderboardEntry>,
-    rows: readonly { name: string; value: number }[] | undefined,
+    rows: readonly { name: string; value: number; pfp: string }[] | undefined,
   ): boolean {
     const next = rows ?? [];
     let changed = target.length !== next.length;
 
     for (let i = 0; i < next.length; i += 1) {
-      const row = next[i] as { name: string; value: number };
+      const row = next[i] as { name: string; value: number; pfp: string };
       const existing = target[i];
       if (!existing) {
         const entry = new LeaderboardEntry();
         entry.name = row.name;
         entry.value = row.value;
+        entry.pfp = row.pfp;
         target.push(entry);
         changed = true;
         continue;
@@ -606,6 +671,12 @@ export class GorgeRoom extends Room<GorgeState> {
       }
       if (existing.value !== row.value) {
         existing.value = row.value;
+        changed = true;
+      }
+      // Compared like the other two: a player who changes their avatar should
+      // move the board's version, and one who does not must not.
+      if (existing.pfp !== row.pfp) {
+        existing.pfp = row.pfp;
         changed = true;
       }
     }

@@ -86,6 +86,12 @@ export class JsonFilePersistence implements PersistenceAdapter {
           trailSlot: Math.max(0, Math.floor(finite(raw?.trailSlot, 0))),
           ownedAuras: Math.max(0, Math.floor(finite(raw?.ownedAuras, 0))),
           auraSlot: Math.max(0, Math.floor(finite(raw?.auraSlot, 0))),
+          // Identity, absent in every save written before the leaderboards
+          // showed real names. Capped on the way in as well as on the way out:
+          // a hand-edited save must not be able to put an unbounded string on
+          // another player's scoreboard.
+          legionName: typeof raw?.legionName === 'string' ? raw.legionName.slice(0, 32) : '',
+          legionPfp: typeof raw?.legionPfp === 'string' ? raw.legionPfp.slice(0, 300) : '',
         });
       }
       logger.info(SCOPE, `loaded ${this.cache.size} profiles from ${this.path}`);

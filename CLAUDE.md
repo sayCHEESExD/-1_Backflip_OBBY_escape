@@ -406,6 +406,45 @@ api.bloxity.io) - there is one code path, never a branch on environment.
   profile; if they are online, `GorgeRoom` mirrors the same credit onto their
   live state, because the next autosave would otherwise write the old figure
   back over it. Both halves or neither.
+- **`pointer_lock_changed` is the portal handing off the pointer, not a
+  report.** The SDK emits it ONLY from the portal's `legion_pointer_lock`
+  message - false when the portal takes the pointer for its pause menu, true
+  when it hands it back - and never echoes the game's own lock changes (it has
+  no `pointerlockchange` listener). On false, release only a lock the game
+  still HOLDS: a portal-initiated release is mid-flight (`exitPointerLock` is
+  asynchronous), so the lock still reads as held, and releasing stops the game
+  re-grabbing it behind the portal's menu. When the player's own Escape opened
+  that menu the browser has already let go - and the portal sends NO true on
+  Resume ("Skipping re-lock") - so the game's owed re-lock must stand. That is
+  also why the portal menu is not modelled as input suppression: the Resume
+  after an Escape emits nothing, and a suppressed game would never come back.
+  Do not subscribe `portal.onPointerLockChanged` as well; in this SDK it is the
+  same emitter, and every handoff would be handled twice.
+- A player's Bloxity identity on the room - `legionName`, `legionUserId` and
+  `legionPfp` - is CLIENT-SUPPLIED AND COSMETIC, like a nickname. The server
+  only cleans its shape. Nothing that decides an outcome may read any of them:
+  the name labels a player, the id aims friend requests, the avatar is a
+  picture. All three go with the join, and again through `UpdateIdentity` when
+  `onUserChanged` reports a real change, because a guest who logs in after
+  joining would otherwise stay known to everyone by their guest name, with no
+  account to befriend.
+- **A player is their Bloxity DISPLAY NAME, everywhere it is shown** - the
+  plate over their head, all three boards, the panel. Never an `@handle`,
+  never the session id, and never the internal `playerId`. The boards used to
+  derive a label from that id, which is why `leaderboardName` no longer
+  exists: a generated identifier must not be able to creep back onto a public
+  scoreboard. A player with no Bloxity name gets no plate rather than a
+  fallback label, and a profile saved before identities existed reads
+  "Player" until its owner next plays.
+- `legionPfp` is validated harder than the other two because it is FETCHED
+  rather than drawn: every other player's browser loads that URL, so only
+  https on Bloxity's own hosts is accepted - a real `URL` parse, never a
+  substring match, or `static.bloxity.io.attacker.net` would pass. The board
+  loads it CORS-anonymous, because a tainted canvas cannot be uploaded as a
+  WebGL texture and one bad avatar would take the whole scoreboard down.
+- The name and avatar are PERSISTED in the profile, not just replicated. The
+  boards are global and rank profiles whose owners are offline, and an offline
+  player has no live state to read a name from.
 
 ## Current milestone
 

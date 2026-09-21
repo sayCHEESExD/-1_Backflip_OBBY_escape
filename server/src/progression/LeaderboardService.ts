@@ -1,16 +1,30 @@
 import {
   LEADERBOARD_BOARDS,
   LEADERBOARD_SIZE,
-  leaderboardName,
   type LeaderboardMetric,
 } from '@obby/shared';
 import type { Profile } from './ProfileStore.js';
 
 /** One ranked row, ready to be replicated. */
 export interface RankedEntry {
+  /** The player's Bloxity display name. Never an internal id. */
   readonly name: string;
   readonly value: number;
+  /** Bloxity avatar URL, or empty. */
+  readonly pfp: string;
 }
+
+/**
+ * What a board CALLS a player, and the face beside it.
+ *
+ * Their Bloxity display name, and nothing else. This used to derive a label
+ * from the internal browser id, which put an internal identifier on a public
+ * scoreboard. Every player has a display name - the portal names guests too -
+ * so the only profiles without one are those saved before identities were
+ * stored, and they read as "Player" until their owner next plays.
+ */
+const boardName = (source: RankedSource): string =>
+  (source.legionName ?? '').trim() || 'Player';
 
 /**
  * The three figures a board can rank by.
@@ -23,6 +37,10 @@ export interface RankedSource {
   readonly totalSpeed: number;
   readonly wins: number;
   readonly rebirths: number;
+  /** Bloxity display name. Absent on a profile saved before identities existed. */
+  readonly legionName?: string;
+  /** Bloxity avatar URL. Absent for the same reason. */
+  readonly legionPfp?: string;
 }
 
 /**
@@ -64,12 +82,16 @@ export class LeaderboardService {
     for (const board of LEADERBOARD_BOARDS) {
       const ranked: RankedEntry[] = [];
 
-      for (const [playerId, profile] of current) {
+      for (const [, profile] of current) {
         const value = readMetric(profile, board.metric);
         // A player who has not scored on this board yet is not a rank - an
         // empty row reads better than nine zeroes.
         if (!Number.isFinite(value) || value <= 0) continue;
-        ranked.push({ name: leaderboardName(playerId), value });
+        ranked.push({
+          name: boardName(profile),
+          value,
+          pfp: (profile.legionPfp ?? '').trim(),
+        });
       }
 
       // Highest first; ties broken by name so the order is STABLE. Without a

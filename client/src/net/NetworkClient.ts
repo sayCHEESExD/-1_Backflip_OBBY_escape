@@ -63,12 +63,19 @@ const resolvePlayerId = (): string => {
   return fresh;
 };
 
+/** One row of a board: a Bloxity display name, a figure and an avatar. */
+export interface LeaderboardSnapshotRow {
+  readonly name: string;
+  readonly value: number;
+  readonly pfp: string;
+}
+
 /** The three boards, copied out of the replicated state. */
 export interface LeaderboardSnapshot {
   readonly version: number;
-  readonly rebirths: readonly { name: string; value: number }[];
-  readonly totalSpeed: readonly { name: string; value: number }[];
-  readonly wins: readonly { name: string; value: number }[];
+  readonly rebirths: readonly LeaderboardSnapshotRow[];
+  readonly totalSpeed: readonly LeaderboardSnapshotRow[];
+  readonly wins: readonly LeaderboardSnapshotRow[];
 }
 
 /** Everything the game needs to react to. Kept deliberately small. */
@@ -96,6 +103,10 @@ export class NetworkClient {
   private lastSendAt = 0;
   /** Bloxity display name sent with the join. Empty until one is known. */
   private displayName = '';
+  /** Bloxity account id sent with the join. Empty for a guest. */
+  private userId = '';
+  /** Bloxity avatar URL sent with the join. Empty when the player has none. */
+  private pfp = '';
   /** So a server too old to send boards is reported once, not every frame. */
   private missingBoardsLogged = false;
 
@@ -105,14 +116,31 @@ export class NetworkClient {
   }
 
   /**
-   * The name to introduce this player to the room by.
+   * Who to introduce this player to the room as.
    *
-   * Set before `connect`. Cosmetic: it is replicated so other clients can
-   * raise a "your friend joined" toast, and the server treats it as the
-   * display string it is.
+   * Set before `connect`, and sent with the join. Cosmetic: the name raises a
+   * "your friend joined" toast on other clients and the account id lets them
+   * send a friend request. The server validates the shape and treats both as
+   * the display data they are - nothing gameplay reads either.
    */
-  setDisplayName(name: string): void {
+  setIdentity(name: string, userId: string, pfp: string): void {
     this.displayName = name.slice(0, 32);
+    this.userId = userId;
+    this.pfp = pfp;
+  }
+
+  /**
+   * Change identity mid-session - a guest who logs in after joining.
+   *
+   * Remembered for any later rejoin, and sent at once if already in a room.
+   */
+  updateIdentity(name: string, userId: string, pfp: string): void {
+    this.setIdentity(name, userId, pfp);
+    this.room?.send(MessageType.UpdateIdentity, {
+      legionName: this.displayName,
+      legionUserId: this.userId,
+      legionPfp: this.pfp,
+    });
   }
 
   /**
@@ -132,6 +160,29 @@ export class NetworkClient {
   /** The joined room's id, for the portal's invite links. Null until joined. */
   get roomId(): string | null {
     return this.room?.roomId ?? null;
+  }
+
+  /**
+   * Who is in the room, as plain data - for the Bloxity "in this room" list.
+   *
+   * Copied out so colyseus.js stays inside this module, and read fresh on each
+   * call, so an identity update after a login shows without any bookkeeping.
+   * Includes the local session; callers filter it.
+   */
+  get roomIdentities(): { sessionId: string; name: string; userId: string; pfp: string }[] {
+    const players = this.room?.state?.players;
+    if (!players) return [];
+    const out: { sessionId: string; name: string; userId: string; pfp: string }[] = [];
+    players.forEach((player, sessionId) => {
+      // `??` guards a server older than these fields, which replicates none.
+      out.push({
+        sessionId,
+        name: player.legionName ?? '',
+        userId: player.legionUserId ?? '',
+        pfp: player.legionPfp ?? '',
+      });
+    });
+    return out;
   }
 
   get connectionStatus(): ConnectionStatus {
@@ -164,8 +215,12 @@ export class NetworkClient {
           'client; redeploy the server',
       );
     }
-    const rows = (entries: { name: string; value: number }[] | undefined) =>
-      entries ? entries.map((e) => ({ name: e.name, value: e.value })) : [];
+    const rows = (
+      entries: { name: string; value: number; pfp: string }[] | undefined,
+    ): LeaderboardSnapshotRow[] =>
+      entries
+        ? entries.map((e) => ({ name: e.name, value: e.value, pfp: e.pfp ?? '' }))
+        : [];
     return {
       version: state.leaderboardVersion,
       rebirths: rows(state.topRebirths),
@@ -186,6 +241,8 @@ export class NetworkClient {
         this.room = await this.client.joinOrCreate<NetGorgeState>(ROOM_NAME, {
           playerId,
           legionName: this.displayName,
+          legionUserId: this.userId,
+          legionPfp: this.pfp,
         });
         break;
       } catch (error) {

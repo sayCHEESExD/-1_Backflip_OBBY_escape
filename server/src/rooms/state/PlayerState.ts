@@ -30,6 +30,26 @@ export class PlayerState extends Schema {
    */
   @type('string') legionName = '';
 
+  /**
+   * The player's Bloxity account id, so another player can send them a friend
+   * request. Empty for a guest, who has no account to befriend.
+   *
+   * Client-supplied and cosmetic for the same reason as `legionName`: it
+   * identifies who to befriend and nothing else. A forged id could at worst
+   * aim a friend request at the wrong account, which that account's owner can
+   * simply decline - it grants nothing in this game.
+   */
+  @type('string') legionUserId = '';
+
+  /**
+   * The player's Bloxity avatar URL, drawn beside their name on the boards.
+   *
+   * Client-supplied and cosmetic like the other two, but with a sharper edge:
+   * every OTHER player's browser fetches this URL, so the room only accepts
+   * one on Bloxity's own hosts - see `cleanLegionPfp`.
+   */
+  @type('string') legionPfp = '';
+
   @type('float32') x: number = SPAWN_POSITION.x;
   @type('float32') y: number = SPAWN_POSITION.y;
   @type('float32') z: number = SPAWN_POSITION.z;

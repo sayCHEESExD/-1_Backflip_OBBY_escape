@@ -12,6 +12,10 @@ export interface NetPlayerState extends PlayerMotionState {
   sessionId: string;
   /** Bloxity display name, for friend-join toasts. Cosmetic only. */
   legionName: string;
+  /** Bloxity account id, for friend requests. Empty for a guest. Cosmetic only. */
+  legionUserId: string;
+  /** Bloxity avatar URL, shown beside the name. Empty when none. Cosmetic only. */
+  legionPfp: string;
   x: number;
   y: number;
   z: number;
@@ -67,6 +71,8 @@ export interface NetPlayerState extends PlayerMotionState {
 export interface NetLeaderboardEntry {
   name: string;
   value: number;
+  /** Bloxity avatar URL, or empty. */
+  pfp: string;
 }
 
 export interface NetGorgeState {

@@ -15,9 +15,22 @@ const SCOPE = 'BloxityPanel';
  */
 const RAIL_TOP = 386;
 
+/** Another player in the current room, as the Bloxity panel lists them. */
+export interface RoomPlayer {
+  readonly sessionId: string;
+  /** Bloxity display name, or empty if the player sent none. */
+  readonly name: string;
+  /** Bloxity account id, or empty for a guest. */
+  readonly userId: string;
+  /** Bloxity avatar URL, or empty. */
+  readonly pfp: string;
+}
+
 export interface BloxityPanelOptions {
   /** Shortcut shown on the launcher, e.g. "4". */
   readonly menuKey: string;
+  /** Everyone else in the room right now, read fresh on every repaint. */
+  readonly getRoomPlayers: () => readonly RoomPlayer[];
 }
 
 /**
@@ -41,9 +54,11 @@ export class BloxityPanel {
   private friendsLoading = false;
   private buxBalance: number | null = null;
   private notice = '';
+  private readonly getRoomPlayers: () => readonly RoomPlayer[];
 
   constructor(parent: HTMLElement, options: BloxityPanelOptions) {
     injectStyles();
+    this.getRoomPlayers = options.getRoomPlayers;
 
     this.button = document.createElement('button');
     this.button.className = 'obby-blox-btn';
@@ -118,6 +133,22 @@ export class BloxityPanel {
     if (this.isOpen) this.repaint();
   }
 
+  /**
+   * Re-fetch friends and the Bux balance after the identity changed.
+   *
+   * Only while open: a closed panel fetches both when it next opens, and a
+   * login should not cost network round-trips nobody is looking at. A logout
+   * clears the friends list before repainting, so the previous account's
+   * friends are never shown under a guest name.
+   */
+  reloadData(): void {
+    if (!this.isOpen) return;
+    if (!bloxity.isLoggedIn()) this.friends = [];
+    this.repaint();
+    void this.loadFriends();
+    void this.loadBalance();
+  }
+
   dispose(): void {
     modalLayer.unregister(this);
     this.button.remove();
@@ -168,6 +199,7 @@ export class BloxityPanel {
 
     this.body.appendChild(this.buildAccount());
     this.body.appendChild(this.buildFriends());
+    this.body.appendChild(this.buildRoomPlayers());
     this.body.appendChild(this.buildBux());
 
     if (this.notice) this.body.appendChild(note(this.notice));
@@ -196,7 +228,9 @@ export class BloxityPanel {
     primary.textContent = displayNameOf(user) || guest?.displayName || guest?.username || 'Guest';
     const secondary = document.createElement('div');
     secondary.className = 'obby-blox__handle';
-    secondary.textContent = user ? `@${user.username}` : 'Playing as a guest';
+    // The account's own handle is not shown: a player is their DISPLAY NAME
+    // here and everywhere else in the game.
+    secondary.textContent = user ? 'Signed in to Bloxity' : 'Playing as a guest';
     names.append(primary, secondary);
     row.appendChild(names);
 
@@ -298,6 +332,88 @@ export class BloxityPanel {
     }
 
     return section('Friends', children);
+  }
+
+  /**
+   * Everyone else in this room, with an "Add friend" action.
+   *
+   * Only players whose Bloxity account id is known get the button: a guest has
+   * no account to befriend, an existing friend needs no request, and the same
+   * account open in another tab is not somebody to add. The list is read fresh
+   * from the replicated room state on every repaint.
+   */
+  private buildRoomPlayers(): HTMLElement {
+    const children: HTMLElement[] = [];
+    const me = bloxity.getUser();
+    const friendIds = new Set(this.friends.map((friend) => friend._id));
+    const others = this.getRoomPlayers().filter((player) => player.name);
+
+    if (others.length === 0) {
+      children.push(note('Nobody else is in this room right now.'));
+      return section('In this room', children);
+    }
+
+    for (const player of others) {
+      const row = document.createElement('div');
+      row.className = 'obby-blox__friend';
+
+      if (player.pfp) {
+        const img = document.createElement('img');
+        img.src = player.pfp;
+        img.alt = '';
+        img.className = 'obby-blox__pfp obby-blox__pfp--small';
+        row.appendChild(img);
+      }
+
+      const names = document.createElement('div');
+      names.className = 'obby-blox__names';
+      const primary = document.createElement('div');
+      primary.className = 'obby-blox__name';
+      primary.textContent = player.name;
+      const detail = document.createElement('div');
+      detail.className = 'obby-blox__handle';
+      names.append(primary, detail);
+      row.appendChild(names);
+
+      if (!player.userId) {
+        detail.textContent = 'Guest';
+      } else if (me && player.userId === me._id) {
+        detail.textContent = 'You, in another tab';
+      } else if (friendIds.has(player.userId)) {
+        detail.textContent = 'Friend';
+      } else if (!bloxity.isLoggedIn()) {
+        // `isLoggedIn`, not `getUser`: the SDK can hold a user object whose
+        // token is missing or expired, and a friend request made with it is
+        // certain to fail. This is the same gate the friends list uses.
+        detail.textContent = 'Log in to add friends';
+      } else {
+        detail.textContent = 'Bloxity player';
+        row.appendChild(
+          button('Add friend', 'primary', async () => {
+            const result = await bloxity.sendFriendRequest(player.userId);
+            if (!result.success) {
+              this.say(
+                result.error
+                  ? `Friend request failed: ${result.error}`
+                  : `Could not add ${player.name}.`,
+              );
+              return;
+            }
+            if (result.status === 'accepted') {
+              this.say(`You and ${player.name} are now friends.`);
+              // They had already asked, so this completed the friendship.
+              void this.loadFriends();
+            } else {
+              this.say(`Friend request sent to ${player.name}.`);
+            }
+          }),
+        );
+      }
+
+      children.push(row);
+    }
+
+    return section('In this room', children);
   }
 
   private buildBux(): HTMLElement {

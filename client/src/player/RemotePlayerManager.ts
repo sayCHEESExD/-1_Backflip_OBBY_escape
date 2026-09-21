@@ -41,6 +41,9 @@ export class RemotePlayerManager {
     // trail must stay where it was laid down.
     this.scene.add(player.character.worldRoot);
     player.character.setCosmetics(state.trailSlot, state.auraSlot);
+    // Named from replicated state, so every client sees the same name over the
+    // same player - and a player with no Bloxity name gets no plate at all.
+    player.character.setDisplayName(state.legionName ?? '');
     this.players.set(sessionId, player);
 
     logger.info(SCOPE, `remote player added: ${sessionId} (total ${this.players.size})`);
@@ -61,6 +64,10 @@ export class RemotePlayerManager {
     // trail and aura on a given player.
     player.character.setCosmetics(state.trailSlot, state.auraSlot);
     player.character.boots.setSlot(state.bootSlot);
+    // Re-applied on every patch so a player who logs in mid-session stops
+    // being their guest name on everyone else's screen. `setDisplayName`
+    // returns early when it has not changed, so this costs nothing per patch.
+    player.character.setDisplayName(state.legionName ?? '');
   }
 
   remove(sessionId: string): void {

@@ -22,6 +22,16 @@ export interface StoredProfile {
   trailSlot: number;
   ownedAuras: number;
   auraSlot: number;
+  /**
+   * The player's Bloxity display name and avatar.
+   *
+   * Stored, not just replicated, because the global leaderboards rank every
+   * profile this server has ever seen - including players who are OFFLINE and
+   * have no live state to read a name from. Absent in saves written before
+   * identities existed, so both default to empty on read.
+   */
+  legionName: string;
+  legionPfp: string;
 }
 
 export interface PersistenceAdapter {

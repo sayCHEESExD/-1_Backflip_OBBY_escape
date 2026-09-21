@@ -1,7 +1,7 @@
 import { logger } from '../util/logger.js';
 import { AvatarAppearance } from './AvatarAppearance.js';
 import { bloxity } from './BloxitySdk.js';
-import { BloxityPanel } from './BloxityPanel.js';
+import { BloxityPanel, type RoomPlayer } from './BloxityPanel.js';
 import { SETTING_KEYS, settingBool, settingNumber } from './bloxityConfig.js';
 import type { LegionUser, Unsubscribe } from './sdkTypes.js';
 
@@ -31,6 +31,15 @@ export interface BloxityHost {
   respawn(): void;
   /** The local character, once it exists, for the avatar layer to dress. */
   getCharacterForAvatar(): ConstructorParameters<typeof AvatarAppearance>[0] | null;
+  /**
+   * The portal took the pointer for its own menu (false) or handed it back
+   * (true). The game's pointer-lock owner decides what that means for it.
+   */
+  setPortalPointerLock(locked: boolean): void;
+  /** Tell the room who this player is now, e.g. after a login. Cosmetic only. */
+  updateIdentity(name: string, userId: string, pfp: string): void;
+  /** Everyone else in the room right now. */
+  getRoomPlayers(): readonly RoomPlayer[];
 }
 
 /**
@@ -57,9 +66,23 @@ export class BloxityBridge {
   private chatEnabled = true;
   private started = false;
 
+  /**
+   * The account id seen on the last `onUserChanged`, or `undefined` before the
+   * first one.
+   *
+   * The callback fires immediately with the CURRENT state as well as on real
+   * changes. That first call must still dress the avatar, but re-pulling
+   * settings or re-announcing an identity the room already has would be a
+   * redundant round-trip on every boot.
+   */
+  private lastUserId: string | null | undefined = undefined;
+
   constructor(container: HTMLElement, host: BloxityHost, menuKey: string) {
     this.host = host;
-    this.panel = new BloxityPanel(container, { menuKey });
+    this.panel = new BloxityPanel(container, {
+      menuKey,
+      getRoomPlayers: () => host.getRoomPlayers(),
+    });
     this.chat = new ChatFeed(container);
   }
 
@@ -102,6 +125,24 @@ export class BloxityBridge {
     return guest?.displayName || guest?.username || '';
   }
 
+  /** The signed-in account's id, or empty for a guest. Read through, never cached. */
+  get playerUserId(): string {
+    return bloxity.getUser()?._id ?? '';
+  }
+
+  /**
+   * The player's Bloxity avatar URL, signed in or not.
+   *
+   * Guests have a portal-generated picture as well as a name, so this is
+   * rarely empty - which is what lets the scoreboards show a face for
+   * everybody rather than only for signed-in players.
+   */
+  get playerPfp(): string {
+    const user = bloxity.getUser();
+    if (user?.pfp) return user.pfp;
+    return bloxity.getGuest()?.pfp ?? '';
+  }
+
   /** Announce the joinable room so a friend's invite lands in the right one. */
   setRoom(roomId: string): void {
     bloxity.updateRoom(roomId);
@@ -136,11 +177,25 @@ export class BloxityBridge {
           SCOPE,
           user ? `signed in as @${user.username}` : 'signed out (playing as guest)',
         );
-        // The panel re-reads the user itself; this only tells it when to.
-        this.panel.refresh();
         // Identity decides the avatar, the friends list and the balance, so
         // they are all refreshed from this one place rather than separately.
+        // The panel re-reads the user itself; this only tells it when to.
         this.applyAvatar();
+        this.panel.reloadData();
+
+        const userId = user?._id ?? null;
+        const changed = this.lastUserId !== undefined && userId !== this.lastUserId;
+        this.lastUserId = userId;
+        if (!changed) return;
+
+        // Settings are synced PER ACCOUNT, so a login brings a different set
+        // from the guest defaults. Re-pull them; the registered listeners
+        // apply whatever arrives.
+        bloxity.refreshSettings();
+        // Other players know this one by the name and account id sent at join.
+        // A login afterwards changes both - without this, a friend would never
+        // get the "joined" toast or an Add-friend button for them.
+        this.host.updateIdentity(this.playerName, this.playerUserId, this.playerPfp);
       }),
     );
   }
@@ -173,16 +228,21 @@ export class BloxityBridge {
             if (this.chatEnabled && typeof data === 'string') this.chat.push(data);
             return;
           case 'pointer_lock_changed':
-            // Informational: the portal reporting what the browser did. The
-            // game's own pointer-lock owner reacts to `pointerlockchange`
-            // directly, so acting on this too would fight it.
+            // NOT informational. The SDK emits this only when the PORTAL takes
+            // the pointer for its pause menu (false) or hands it back (true) -
+            // it never echoes the game's own lock changes. Unhandled, the
+            // game's pointer-lock owner treats the portal's release as an
+            // accidental one and grabs the pointer straight back, behind the
+            // portal's own menu.
+            this.host.setPortalPointerLock(data === true);
             return;
           default:
             return;
         }
       }),
-      // Older SDK builds report the lock here instead of through onEvent.
-      bloxity.onPointerLockChanged(() => undefined),
+      // `portal.onPointerLockChanged` is deliberately NOT subscribed as well:
+      // in this SDK it feeds from the very same emitter as the event above,
+      // so listening to both would handle every portal handoff twice.
     );
   }
 

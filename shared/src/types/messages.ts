@@ -54,6 +54,21 @@ export interface HazardHitMessage {
 }
 
 /**
+ * Client -> server: the player's Bloxity identity changed (MessageType.UpdateIdentity).
+ *
+ * Display data, not a claim: the server validates the shape and stores it on
+ * the replicated player so other clients can name them and offer a friend
+ * request. Nothing that decides an outcome reads it.
+ */
+export interface UpdateIdentityMessage {
+  legionName: string;
+  /** Bloxity account id, or empty for a guest. */
+  legionUserId: string;
+  /** Bloxity avatar URL, or empty. Validated against Bloxity's own hosts. */
+  legionPfp: string;
+}
+
+/**
  * Client -> server: "I walked onto this boot's pedestal, buy it."
  *
  * A request, never a grant. The server checks the slot, the player's Wins and

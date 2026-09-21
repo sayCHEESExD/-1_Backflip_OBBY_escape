@@ -90,18 +90,12 @@ export const LEADERBOARD_BOARDS: readonly LeaderboardBoard[] = [
   },
 ];
 
-/**
- * A display name for a player id.
+/*
+ * There is deliberately NO name-from-id helper here any more.
  *
- * The game has no username system - a profile is keyed by a random browser id
- * and carries only progression - so a readable, STABLE label is derived from
- * that id rather than inventing an account system for a scoreboard. The same
- * id always produces the same name, on every client and every room.
+ * This file used to export `leaderboardName`, which derived a label from the
+ * internal browser id - "p_l4kqvrex..." became "Lbnewcome". That put an
+ * internal identifier on a public scoreboard, so it is gone rather than left
+ * available: players are named by their Bloxity display name, which every
+ * player has, because the portal names guests too. See `LeaderboardService`.
  */
-export const leaderboardName = (playerId: string): string => {
-  const trimmed = playerId.startsWith('p_') ? playerId.slice(2) : playerId;
-  const cleaned = trimmed.replace(/[^a-zA-Z0-9]/g, '');
-  if (cleaned.length === 0) return 'Player';
-  const head = cleaned.slice(0, 9);
-  return head.charAt(0).toUpperCase() + head.slice(1);
-};

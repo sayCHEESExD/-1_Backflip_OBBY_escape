@@ -45,6 +45,16 @@ export const MessageType = {
    * never touched.
    */
   RequestRespawn: 'requestRespawn',
+  /**
+   * Client -> server: "this is who I am now" - Bloxity display name and
+   * account id.
+   *
+   * COSMETIC ONLY, exactly like the same two fields sent with the join. It
+   * exists because a guest who logs in after joining would otherwise stay
+   * known to everyone else by their guest name, with no account to befriend.
+   * Nothing gameplay reads either field.
+   */
+  UpdateIdentity: 'updateIdentity',
   /** Client -> server: request to buy the boot the player is standing on. */
   BuyBoot: 'buyBoot',
   /** Client -> server: request a rebirth. */

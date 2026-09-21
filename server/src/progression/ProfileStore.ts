@@ -17,6 +17,8 @@ const emptyProfile = (): Profile => ({
   trailSlot: 0,
   ownedAuras: 0,
   auraSlot: 0,
+  legionName: '',
+  legionPfp: '',
 });
 
 /**
@@ -98,6 +100,11 @@ export class ProfileStore {
       trailSlot: player.trailSlot,
       ownedAuras: player.ownedAuras,
       auraSlot: player.auraSlot,
+      // Carried so the leaderboards can name and picture this player while
+      // they are offline. Already cleaned by the room before it reached the
+      // replicated state, so it is stored as-is.
+      legionName: player.legionName,
+      legionPfp: player.legionPfp,
     };
     this.profiles.set(playerId, profile);
     // The adapter coalesces these; durability is guaranteed by `flush`.

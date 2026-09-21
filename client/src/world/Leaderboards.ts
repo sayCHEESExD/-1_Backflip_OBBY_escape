@@ -23,9 +23,20 @@ import {
 
 /** One ranked row as the client receives it. */
 export interface LeaderboardRow {
+  /** The player's Bloxity display name. Never an internal id. */
   readonly name: string;
   readonly value: number;
+  /** Bloxity avatar URL, or empty when that player has none. */
+  readonly pfp: string;
 }
+
+/**
+ * Avatar images, shared by all three boards and kept across redraws.
+ *
+ * `null` marks a URL that failed, so a broken image is attempted once rather
+ * than on every repaint.
+ */
+const avatarCache = new Map<string, HTMLImageElement | null>();
 
 /** Canvas pixels per board. Sized to the panel's own aspect so text is square. */
 const CANVAS_WIDTH = 560;
@@ -59,6 +70,9 @@ export class Leaderboards {
   private readonly materials: Material[] = [];
   private readonly canvases = new Map<LeaderboardBoard, HTMLCanvasElement>();
   private readonly textures = new Map<LeaderboardBoard, CanvasTexture>();
+  /** What each board was last told to show, so an avatar can repaint it later. */
+  private readonly lastRows = new Map<LeaderboardBoard, readonly LeaderboardRow[]>();
+  private disposed = false;
 
   constructor() {
     const { width, height, centerY, standoff } = LEADERBOARD_PANEL;
@@ -126,15 +140,100 @@ export class Leaderboards {
   setRows(metric: LeaderboardBoard['metric'], rows: readonly LeaderboardRow[]): void {
     const board = LEADERBOARD_BOARDS.find((b) => b.metric === metric);
     if (!board) return;
-    this.draw(board, rows);
+    this.lastRows.set(board, rows);
+    this.paint(board);
+  }
+
+  /** Redraw one board from the rows it was last given. */
+  private paint(board: LeaderboardBoard): void {
+    if (this.disposed) return;
+    this.draw(board, this.lastRows.get(board) ?? []);
     const texture = this.textures.get(board);
     if (texture) texture.needsUpdate = true;
   }
 
+  /**
+   * The avatar for a row, fetched on first sight.
+   *
+   * CORS-anonymous deliberately: drawing a cross-origin image onto the canvas
+   * would TAINT it, and a tainted canvas cannot be uploaded as a WebGL
+   * texture - the board would throw rather than miss one face. Bloxity's CDN
+   * answers `access-control-allow-origin: *`, so the request is honoured; a
+   * URL that is not is remembered as failed and drawn as an initial instead.
+   */
+  private avatar(url: string): HTMLImageElement | null {
+    const cached = avatarCache.get(url);
+    if (cached !== undefined) return cached;
+
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.onload = () => {
+      // Whichever boards list this player now have a face to draw.
+      for (const board of LEADERBOARD_BOARDS) this.paint(board);
+    };
+    image.onerror = () => avatarCache.set(url, null);
+    image.src = url;
+    avatarCache.set(url, image);
+    return image;
+  }
+
   dispose(): void {
+    this.disposed = true;
     for (const geometry of this.geometries) geometry.dispose();
     for (const material of this.materials) material.dispose();
     for (const texture of this.textures.values()) texture.dispose();
+  }
+
+  /**
+   * One player's Bloxity avatar, or their initial when there is none.
+   *
+   * A face is always drawn: a blank gap where every other row has a picture
+   * reads as a broken image rather than as a player without one.
+   */
+  private drawAvatar(
+    ctx: CanvasRenderingContext2D,
+    row: LeaderboardRow,
+    x: number,
+    y: number,
+    size: number,
+    accent: string,
+  ): void {
+    const image = row.pfp ? this.avatar(row.pfp) : null;
+    const cx = x + size / 2;
+    const cy = y + size / 2;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
+    ctx.clip();
+
+    if (image && image.complete && image.naturalWidth > 0) {
+      // Cover-fit, so a non-square source is cropped rather than squashed.
+      const scale = size / Math.min(image.naturalWidth, image.naturalHeight);
+      const w = image.naturalWidth * scale;
+      const h = image.naturalHeight * scale;
+      ctx.drawImage(image, cx - w / 2, cy - h / 2, w, h);
+    } else {
+      ctx.fillStyle = accent;
+      ctx.fillRect(x, y, size, size);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `900 ${Math.round(size * 0.56)}px "Trebuchet MS", "Segoe UI", sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(row.name.trim().charAt(0).toUpperCase() || '?', cx, cy + 1);
+    }
+    ctx.restore();
+
+    // A ring, so a dark avatar still separates from the panel behind it.
+    ctx.beginPath();
+    ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
+    ctx.lineWidth = Math.max(2, size * 0.07);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.stroke();
+
+    // The row draws left-aligned text after this.
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
   }
 
   /** Paint one board: title bar, then nine rows. */
@@ -200,7 +299,10 @@ export class Leaderboards {
     const rowH = (H - top - inset - 6) / LEADERBOARD_SIZE;
     const rowSize = Math.round(rowH * 0.5);
     const rankX = inset + 14;
-    const nameX = rankX + Math.round(W * 0.115);
+    // The row reads rank, face, name: [#1] (avatar) Chicken 877 ... [1.2k Wins]
+    const avatarD = Math.round(rowH * 0.82);
+    const avatarX = rankX + Math.round(W * 0.062);
+    const nameX = avatarX + avatarD + 12;
     const pillRight = W - inset - 12;
 
     for (let i = 0; i < LEADERBOARD_SIZE; i += 1) {
@@ -221,7 +323,9 @@ export class Leaderboards {
 
       if (!row) continue;
 
-      // Name, clipped so a long id cannot run under the value pill.
+      this.drawAvatar(ctx, row, avatarX, cy - avatarD / 2, avatarD, accent);
+
+      // Name, clipped so a long one cannot run under the value pill.
       const value = `${formatSpeed(row.value)} ${board.unit}`;
       const valueSize = Math.round(rowSize * 0.72);
       ctx.font = `900 ${valueSize}px "Trebuchet MS", "Segoe UI", sans-serif`;

@@ -199,6 +199,10 @@ class BloxitySdkFacade {
     this.sdk?.avatar.hideCustomizer();
   }
 
+  toggleCustomizer(): void {
+    this.sdk?.avatar.toggleCustomizer();
+  }
+
   isCustomizerOpen(): boolean {
     return this.sdk?.avatar.isCustomizerOpen() ?? false;
   }
@@ -263,6 +267,18 @@ class BloxitySdkFacade {
   /** Re-fire every registered listener with the current value. */
   triggerAllSettings(): void {
     this.sdk?.settings.triggerAll();
+  }
+
+  /**
+   * Re-pull settings from their source of truth.
+   *
+   * Settings are SYNCED per account, so a player who logs in mid-session has a
+   * different set from the guest defaults they started with. The SDK does not
+   * re-pull on its own when the user changes; listeners registered with
+   * `listenSetting` receive whatever arrives.
+   */
+  refreshSettings(): void {
+    this.sdk?.settings.refresh();
   }
 
   // --- game lifecycle ---------------------------------------------------

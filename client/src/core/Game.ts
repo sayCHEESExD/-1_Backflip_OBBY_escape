@@ -293,6 +293,29 @@ export class Game {
       // the authoritative message, exactly as it does for a fall.
       respawn: () => this.network.requestRespawn(),
       getCharacterForAvatar: () => this.localPlayer?.character ?? null,
+      setPortalPointerLock: (locked) => {
+        const look = this.input.look;
+        if (locked) {
+          look.engage();
+          return;
+        }
+        // Release only a lock the game still HOLDS. When the portal takes the
+        // pointer itself, the SDK has just called exitPointerLock, which is
+        // asynchronous - the lock still reads as held, and releasing here stops
+        // the game re-grabbing it behind the portal's menu. When the player's
+        // own Escape opened that menu, the browser has already let go and the
+        // portal will not hand it back on Resume, so the owed re-lock must
+        // stand: releasing then would leave a visible cursor over the game.
+        if (look.locked) look.release();
+      },
+      updateIdentity: (name, userId, pfp) => {
+        this.network.updateIdentity(name, userId, pfp);
+        // The plate over this player's own head, which nobody else's state
+        // carries. Remote plates follow the replicated name instead.
+        this.localPlayer?.character.setDisplayName(name);
+      },
+      getRoomPlayers: () =>
+        this.network.roomIdentities.filter((player) => player.sessionId !== this.localSessionId),
     };
   }
 
@@ -315,7 +338,11 @@ export class Game {
   async connect(): Promise<void> {
     // Introduce the player by their Bloxity name, so other clients can raise
     // a friend-joined toast. Guests are named too, so this is rarely empty.
-    this.network.setDisplayName(this.bloxityBridge.playerName);
+    this.network.setIdentity(
+      this.bloxityBridge.playerName,
+      this.bloxityBridge.playerUserId,
+      this.bloxityBridge.playerPfp,
+    );
     await this.network.connect();
   }
 
@@ -410,6 +437,10 @@ export class Game {
     // After the world and the local player exist, so the first avatar push
     // has something to dress.
     this.bloxityBridge.start();
+    // The first `onUserChanged` is the CURRENT state rather than a change, so
+    // it deliberately announces nothing - this is what puts the player's own
+    // name over their own head on the first frame.
+    this.localPlayer?.character.setDisplayName(this.bloxityBridge.playerName);
     bloxity.gameplayStart();
   }
 
@@ -611,6 +642,14 @@ export class Game {
 
   private onStatusChange(status: ConnectionStatus): void {
     this.overlay?.setStatus(status);
+    // A room this player can no longer reach is not one to invite a friend
+    // into. Cleared when the connection is lost and re-announced when it comes
+    // back, so an invite link never points at a room they have left.
+    if (status === 'disconnected' || status === 'error') {
+      this.bloxityBridge.setRoom('');
+    } else if (status === 'connected' && this.network.roomId) {
+      this.bloxityBridge.setRoom(this.network.roomId);
+    }
   }
 
   private onSelfJoined(sessionId: string): void {

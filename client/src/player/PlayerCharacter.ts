@@ -6,6 +6,7 @@ import { AuraEffect } from './AuraEffect.js';
 import { TrailEffect } from './TrailEffect.js';
 import { PlayerRig } from '../animation/rig/PlayerRig.js';
 import { BootModel } from './BootModel.js';
+import { NamePlate } from './NamePlate.js';
 import { PLAYER_MODEL_YAW_OFFSET } from '../config/playerVisuals.js';
 import { playerModelLoader } from './PlayerModelLoader.js';
 
@@ -43,6 +44,15 @@ export class PlayerCharacter {
   readonly trail = new TrailEffect();
 
   /**
+   * The player's Bloxity display name, floating above them.
+   *
+   * On `root`, the physics transform - not the flip pivot, which would
+   * cartwheel it through a backflip, and not `visual`, which the death squash
+   * scales.
+   */
+  readonly namePlate = new NamePlate();
+
+  /**
    * Whole-body scale from the player's Bloxity avatar proportions.
    *
    * Its own node rather than a write to `visual` or `model`: `visual.scale` is
@@ -77,7 +87,18 @@ export class PlayerCharacter {
     this.boots = new BootModel([this.rig.getBone('LegL2'), this.rig.getBone('LegR2')]);
 
     this.root.add(this.aura.root);
+    this.root.add(this.namePlate.sprite);
     this.worldRoot.add(this.trail.root);
+  }
+
+  /**
+   * Name this character on screen.
+   *
+   * The player's BLOXITY DISPLAY NAME, never an internal id. An empty name
+   * hides the plate rather than inventing a label.
+   */
+  setDisplayName(name: string): void {
+    this.namePlate.setName(name);
   }
 
   /**
@@ -148,6 +169,7 @@ export class PlayerCharacter {
 
   dispose(): void {
     this.boots.dispose();
+    this.namePlate.dispose();
     this.aura.dispose();
     this.trail.dispose();
     this.root.removeFromParent();

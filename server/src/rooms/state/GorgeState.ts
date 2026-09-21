@@ -8,8 +8,11 @@ import { PlayerState } from './PlayerState.js';
  * with. There is no message a client can send that reaches this.
  */
 export class LeaderboardEntry extends Schema {
+  /** The player's Bloxity display name - never an internal id. */
   @type('string') name = '';
   @type('float64') value = 0;
+  /** Bloxity avatar URL, or empty when that player has none. */
+  @type('string') pfp = '';
 }
 
 /** Root replicated state for a single gorge instance. */
