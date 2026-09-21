@@ -62,7 +62,7 @@ npm run build:shared
 | `npm run inspect:fbx`    | Dumps bones, meshes and texture paths from player.fbx |
 | `npm run verify:assets`  | Checks the player assets are present and unmodified   |
 
-Environment variables: `PORT`, `HOST`, `OBBY_DATA_DIR`, `BLOXITY_GAME_SLUG`
+Environment variables: `PORT`, `HOST`, `MONGODB_URI`, `OBBY_DATA_DIR`, `BLOXITY_GAME_SLUG`
 and `BLOXITY_WEBHOOK_SECRET` on the server; `VITE_SERVER_URL`, `VITE_DEBUG=1`
 and (dev only) `VITE_BLOXITY_PORTAL_URL` / `VITE_BLOXITY_API_URL` on the
 client.
@@ -112,8 +112,20 @@ login at <https://dev.bloxity.io/hosting/docs> and is not public - a guessed
 route would POST a build somewhere that may not exist. The `preflight` job
 fails with instructions until both are set.
 
-`OBBY_DATA_DIR` matters here too, for the reason below: a container filesystem
-is ephemeral, so without a mounted volume every deploy starts with no profiles.
+**Saved progress on Bloxity lives in Bloxity's managed MongoDB.** Bloxity
+Hosting injects `MONGODB_URI` into every pod, and whenever it is set the server
+stores profiles there instead of on disk - the container's disk is replaced on
+every deploy and on every scale-to-zero, which is why progress used to vanish
+after an update. Nothing needs configuring. After a deploy, the server log
+should show `using Bloxity managed MongoDB (MONGODB_URI)` followed by
+`[MongoPersistence] connected to database "..."`; if it shows the JSON-file
+warning instead, the variable is not reaching the pod.
+
+While the database is unreachable the server stays up but refuses joins with a
+"please try again" message (the client retries), rather than starting anyone
+from zero and later saving that zero over their progress. Each join re-reads
+that player's profile from the database, so several server instances never
+overwrite each other's saves.
 
 ### Deploying elsewhere
 
@@ -125,7 +137,8 @@ deployment behaves like the dev setup:
 - **`VITE_SERVER_URL`** is baked into the client at BUILD time, so it must be
   set on the host that runs `npm run build:client` - changing it later means
   rebuilding. Over HTTPS it has to be a `wss://` URL.
-- **`OBBY_DATA_DIR` must point at storage that survives a restart.** It
+- **Set `MONGODB_URI`, or point `OBBY_DATA_DIR` at storage that survives a
+  restart.** With a database URI the directory is unused. Without one it
   defaults to `data/` beside the server, which on a container host is part of
   the image and is thrown away on every deploy and every cold start. Profiles
   are the ONLY record of what players have earned, and the leaderboards rank

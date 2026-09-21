@@ -67,7 +67,7 @@ export class BuxFulfilmentService {
    * SUCCESS - the first delivery already paid out, and refunding it because
    * the retry found nothing to do would take back Wins that were granted.
    */
-  fulfil(payload: BuxWebhookPayload): FulfilmentOutcome {
+  async fulfil(payload: BuxWebhookPayload): Promise<FulfilmentOutcome> {
     const sku = asString(payload.sku);
     const transactionId = asString(payload.transactionId);
     const slug = asString(payload.gameSlug);
@@ -92,7 +92,7 @@ export class BuxFulfilmentService {
       return { status: 'duplicate', playerId };
     }
 
-    const balance = this.profiles.creditWins(playerId, product.wins);
+    const balance = await this.profiles.creditWins(playerId, product.wins);
     this.remember(transactionId);
 
     logger.info(

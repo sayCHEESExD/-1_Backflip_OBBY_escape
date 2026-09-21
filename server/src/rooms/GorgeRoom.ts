@@ -1,4 +1,4 @@
-import { Client, Room } from '@colyseus/core';
+import { Client, Room, ServerError } from '@colyseus/core';
 import type { ArraySchema } from '@colyseus/schema';
 import {
   DEATH_PLANE_Y,
@@ -39,6 +39,9 @@ import { GorgeState, LeaderboardEntry } from './state/GorgeState.js';
 import { PlayerState } from './state/PlayerState.js';
 
 const SCOPE = 'GorgeRoom';
+
+/** How long a join waits for storage to come up before it is refused. */
+const JOIN_STORAGE_WAIT_MS = 8_000;
 
 /**
  * Maximum concurrent players in one gorge instance.
@@ -232,6 +235,32 @@ export class GorgeRoom extends Room<GorgeState> {
     logger.info(SCOPE, `created roomId=${this.roomId} patchRate=${serverConfig.patchRateMs}ms`);
   }
 
+  /**
+   * Admit a player only once their saved progress can be read.
+   *
+   * Their stored profile is re-read here, fresh, before they join: with
+   * several server instances the copy this one cached may be older than what
+   * another instance saved. If storage is not ready or cannot be read the
+   * join is REFUSED with a retryable error - the client retries on its own -
+   * because admitting them on an empty or stale profile would start them from
+   * zero and the next save would write that over their real progress.
+   */
+  override async onAuth(_client: Client, options?: { playerId?: string }): Promise<boolean> {
+    if (!(await this.profiles.whenReady(JOIN_STORAGE_WAIT_MS))) {
+      throw new ServerError(503, 'Saved progress is still loading - please try again');
+    }
+    const playerId = typeof options?.playerId === 'string' ? options.playerId : '';
+    if (playerId) {
+      try {
+        await this.profiles.refresh(playerId);
+      } catch (error: unknown) {
+        logger.error(SCOPE, `could not read profile playerId=${playerId}`, error);
+        throw new ServerError(503, 'Could not load your saved progress - please try again');
+      }
+    }
+    return true;
+  }
+
   override onJoin(
     client: Client,
     options?: {
@@ -296,7 +325,10 @@ export class GorgeRoom extends Room<GorgeState> {
   override onLeave(client: Client, consented: boolean): void {
     const leaving = this.state.players.get(client.sessionId);
     const playerId = this.playerIds.get(client.sessionId);
-    if (leaving && playerId) this.profiles.save(playerId, leaving);
+    if (leaving && playerId) {
+      this.profiles.save(playerId, leaving);
+      this.profiles.release(playerId);
+    }
     this.playerIds.delete(client.sessionId);
 
     this.state.players.delete(client.sessionId);

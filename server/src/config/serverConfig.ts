@@ -8,8 +8,14 @@ export interface ServerConfig {
   readonly tickRate: number;
   /** Milliseconds between state patches sent to clients. */
   readonly patchRateMs: number;
-  /** Directory holding persisted player profiles. */
+  /** Directory holding persisted player profiles (local JSON store only). */
   readonly dataDir: string;
+  /**
+   * Bloxity's managed MongoDB for this game and channel, injected into every
+   * pod by Bloxity Hosting. When set, profiles live there - the only store
+   * that survives a deploy. Empty in local development.
+   */
+  readonly mongoUri: string;
   /** The slug this game is registered under on bloxity.io. */
   readonly gameSlug: string;
   /**
@@ -35,6 +41,7 @@ export const serverConfig: ServerConfig = {
   // Relative to the server package, which is the working directory for both
   // `npm run dev` and `npm start`, so a restart finds the same file either way.
   dataDir: resolve(process.env['OBBY_DATA_DIR'] ?? 'data'),
+  mongoUri: process.env['MONGODB_URI'] ?? '',
   gameSlug: process.env['BLOXITY_GAME_SLUG'] ?? '1-backflip-obby-escape',
   bloxityWebhookSecret: process.env['BLOXITY_WEBHOOK_SECRET'] ?? '',
 };

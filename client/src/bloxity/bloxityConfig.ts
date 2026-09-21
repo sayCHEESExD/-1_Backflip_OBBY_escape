@@ -42,6 +42,21 @@ export const API_URL = (import.meta.env['VITE_BLOXITY_API_URL'] as string | unde
 /** Avatar asset CDN root. */
 export const AVATAR_CDN = 'https://static.bloxity.io/avatars';
 
+/**
+ * A Bloxity profile picture as a full URL.
+ *
+ * A signed-in account's `pfp` is a PATH (`/pfps/s0.png`) - only guest
+ * pictures arrive as URLs. The SDK turns paths into URLs with exactly this
+ * rule (`pfpUrlFromPath`); without it every signed-in player's picture was
+ * rejected by the server, which only accepts https URLs on Bloxity's hosts.
+ */
+export const resolvePfpUrl = (pfp: string): string => {
+  if (!pfp) return '';
+  if (/^https?:\/\//i.test(pfp)) return pfp;
+  const path = pfp.startsWith('/') ? pfp.slice(1) : pfp;
+  return `https://static.bloxity.io/img/${path}?width=128&quality=85&v=2`;
+};
+
 /** Body-part file per slot under `/parts`, `{id}` filled in by `partMesh`. */
 const PART_FILES: Readonly<Record<AvatarPartSlot, string>> = {
   head: 'head/{id}.glb',

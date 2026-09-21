@@ -5,6 +5,15 @@ import type { PlayerState } from '../rooms/state/PlayerState.js';
 
 const SCOPE = 'ProfileStore';
 
+/** Wait between attempts to reach an unavailable store at startup. */
+const OPEN_RETRY_MS = 5_000;
+
+/**
+ * How often profiles of players NOT on this server are re-read, so the global
+ * scoreboards see progress saved by other server instances.
+ */
+const RELOAD_INTERVAL_MS = 60_000;
+
 /** The progression worth carrying across a reconnect or a server restart. */
 export type Profile = StoredProfile;
 
@@ -26,9 +35,16 @@ const emptyProfile = (): Profile => ({
  * store.
  *
  * The in-memory map is a CACHE in front of a `PersistenceAdapter`; the adapter
- * decides where the bytes actually live, so this class never knows about files
- * or databases. Today that is a JSON file on the server's disk, which is why a
- * restart no longer wipes progress.
+ * decides where the bytes actually live - Bloxity's managed MongoDB in
+ * production, a JSON file in development.
+ *
+ * Two rules keep progress from ever being written over:
+ *   - no join is admitted until the store has been read (`whenReady`), so a
+ *     store that is briefly down cannot hand anyone an empty profile that
+ *     their next save would then persist;
+ *   - each joining player's profile is read FRESH (`refresh`), because with
+ *     several server instances the copy cached at boot may be older than
+ *     what another instance has saved since.
  *
  * Must outlive any single room. Colyseus disposes a room once its last client
  * leaves, so a store owned by the room would be destroyed by exactly the
@@ -43,25 +59,92 @@ export class ProfileStore {
   private readonly profiles = new Map<string, Profile>();
   private readonly adapter: PersistenceAdapter;
   private readonly creditListeners = new Set<(playerId: string, amount: number) => void>();
-  private opened = false;
+  /** Players currently in a room on THIS server; their live state is authoritative. */
+  private readonly live = new Set<string>();
+  private opening: Promise<void> | null = null;
+  private ready = false;
+  private readonly readyWaiters: (() => void)[] = [];
+  private reloadTimer: NodeJS.Timeout | null = null;
 
   constructor(adapter: PersistenceAdapter) {
     this.adapter = adapter;
   }
 
   /**
-   * Read everything the backing store holds.
+   * Read everything the backing store holds, retrying until it answers.
    *
-   * Called once during startup, before the server listens, so the first player
-   * to join already finds their profile in memory.
+   * Runs in the background from startup: the server listens (and answers its
+   * health check) at once, and joins wait on `whenReady` until this is done.
    */
-  open(): void {
-    if (this.opened) return;
-    this.opened = true;
-    for (const [playerId, profile] of this.adapter.open()) {
-      this.profiles.set(playerId, { ...profile });
+  open(): Promise<void> {
+    this.opening ??= (async () => {
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          const stored = await this.adapter.open();
+          for (const [playerId, profile] of stored) this.profiles.set(playerId, { ...profile });
+          break;
+        } catch (error: unknown) {
+          logger.error(
+            SCOPE,
+            `store "${this.adapter.name}" unavailable (attempt ${attempt}) - joins wait until it answers`,
+            error instanceof Error ? error.message : error,
+          );
+          await new Promise((resolve) => setTimeout(resolve, OPEN_RETRY_MS));
+        }
+      }
+      this.ready = true;
+      for (const resolve of this.readyWaiters.splice(0)) resolve();
+      logger.info(SCOPE, `store="${this.adapter.name}" profiles=${this.profiles.size}`);
+      this.reloadTimer = setInterval(() => void this.reloadOthers(), RELOAD_INTERVAL_MS);
+      this.reloadTimer.unref?.();
+    })();
+    return this.opening;
+  }
+
+  /** True once the store has been read. */
+  get isReady(): boolean {
+    return this.ready;
+  }
+
+  /** Resolves true once the store is ready, or false after `timeoutMs`. */
+  whenReady(timeoutMs: number): Promise<boolean> {
+    if (this.ready) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), timeoutMs);
+      this.readyWaiters.push(() => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+    });
+  }
+
+  /**
+   * Re-read one player's profile from the store, just before they join.
+   *
+   * REJECTS if the store cannot be read, and the join is refused: starting
+   * the player from a stale or empty copy would save it over their progress.
+   */
+  async refresh(playerId: string): Promise<void> {
+    if (!playerId || this.live.has(playerId)) return;
+    const stored = await this.adapter.get(playerId);
+    if (stored) this.profiles.set(playerId, stored);
+  }
+
+  /** The player left this server; their stored copy is authoritative again. */
+  release(playerId: string): void {
+    this.live.delete(playerId);
+  }
+
+  /** Pick up what other server instances have saved, for the scoreboards. */
+  private async reloadOthers(): Promise<void> {
+    try {
+      const stored = await this.adapter.open();
+      for (const [playerId, profile] of stored) {
+        if (!this.live.has(playerId)) this.profiles.set(playerId, { ...profile });
+      }
+    } catch {
+      // The boards simply stay as they were until the next attempt.
     }
-    logger.info(SCOPE, `store="${this.adapter.name}" profiles=${this.profiles.size}`);
   }
 
   /** Load a profile into a fresh PlayerState, or seed a new one. */
@@ -79,6 +162,7 @@ export class ProfileStore {
     player.auraSlot = profile.auraSlot ?? 0;
 
     this.profiles.set(playerId, profile);
+    this.live.add(playerId);
     logger.info(
       SCOPE,
       `${existing ? 'restored' : 'new profile'} playerId=${playerId} ` +
@@ -124,16 +208,20 @@ export class ProfileStore {
    * @returns the profile's new balance, already guarded against the uint32
    * wallet wrapping.
    */
-  creditWins(playerId: string, amount: number): number {
+  async creditWins(playerId: string, amount: number): Promise<number> {
     if (!playerId || amount <= 0) return this.profiles.get(playerId)?.wins ?? 0;
 
+    // Credit the STORED profile as it is now - another server instance may
+    // have saved progress since this one cached it, and a credit written onto
+    // a stale copy would take that progress away. Throws if the store cannot
+    // be read, which the webhook turns into a retry rather than a refund.
+    await this.refresh(playerId);
     const profile = this.profiles.get(playerId) ?? emptyProfile();
     profile.wins = creditWins(profile.wins, amount);
     this.profiles.set(playerId, profile);
     this.adapter.put(playerId, profile);
-    // Durable immediately: a purchase is real money, and losing it to a crash
-    // inside the write debounce is not a trade worth making.
-    this.adapter.flush();
+    // Durable before the sale is confirmed: a purchase is real money.
+    await this.adapter.flush();
 
     for (const listener of this.creditListeners) listener(playerId, amount);
     return profile.wins;
@@ -151,9 +239,20 @@ export class ProfileStore {
     };
   }
 
-  /** Force everything to durable storage. Called on shutdown. */
-  flush(): void {
-    this.adapter.flush();
+  /** Write everything pending to durable storage. Called on shutdown. */
+  flush(): Promise<void> {
+    return this.adapter.flush();
+  }
+
+  /** Synchronous last resort for the process `exit` hook (local file only). */
+  flushSync(): void {
+    this.adapter.flushSync?.();
+  }
+
+  /** Release the store's connections at shutdown. */
+  async close(): Promise<void> {
+    if (this.reloadTimer) clearInterval(this.reloadTimer);
+    await this.adapter.close?.();
   }
 
   /** Number of profiles held, for diagnostics. */

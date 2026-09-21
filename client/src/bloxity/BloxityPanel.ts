@@ -2,6 +2,7 @@ import { BUX_PRODUCTS } from '@obby/shared';
 import { getPlayerId } from '../net/NetworkClient.js';
 import { modalLayer } from '../ui/ModalLayer.js';
 import { logger } from '../util/logger.js';
+import { resolvePfpUrl } from './bloxityConfig.js';
 import { bloxity, visibleName } from './BloxitySdk.js';
 import type { LegionFriend, LegionUser } from './sdkTypes.js';
 
@@ -212,7 +213,7 @@ export class BloxityPanel {
     const row = document.createElement('div');
     row.className = 'obby-blox__account';
 
-    const pfp = user?.pfp ?? guest?.pfp;
+    const pfp = resolvePfpUrl(user?.pfp ?? guest?.pfp ?? '');
     if (pfp) {
       const img = document.createElement('img');
       img.src = pfp;
@@ -300,7 +301,7 @@ export class BloxityPanel {
 
       if (friend.pfp) {
         const img = document.createElement('img');
-        img.src = friend.pfp;
+        img.src = resolvePfpUrl(friend.pfp);
         img.alt = '';
         img.className = 'obby-blox__pfp obby-blox__pfp--small';
         row.appendChild(img);

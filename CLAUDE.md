@@ -331,6 +331,25 @@ Procedural, bone-driven, and required for the finished game — not a placeholde
 - Persistence sits behind `PersistenceAdapter` in `server/src/persistence/`.
   Nothing above that boundary knows where profiles are stored, and
   `createPersistence` is the ONLY place naming a concrete adapter.
+- **Production progress lives in Bloxity's managed MongoDB** (`MONGODB_URI`,
+  injected per game+channel; official `mongodb` 6.x driver, which fits the
+  `>=20.11` engines range). The container disk is replaced on every deploy and
+  scale-to-zero - a JSON file there is how progress vanished after updates.
+  The JSON adapter is for local development only.
+- **A profile that decides progress is read FRESH, never from the boot
+  cache**: `GorgeRoom.onAuth` awaits `profileStore.refresh(playerId)` before
+  admitting a player, because up to five server instances share the database
+  and a cached copy can be older than another instance's save. If storage is
+  not ready or the read fails the join is REFUSED (503, the client retries) -
+  admitting someone on an empty profile would save that zero over their
+  progress. The boot load only seeds the scoreboards, and is re-read every
+  minute for players not on this instance.
+- Saves are queued per player and written as idempotent whole-profile upserts,
+  retried with backoff; an outage delays them, never drops them. A Bux credit
+  re-reads the profile first and answers 200 only once the credit is durable -
+  a storage failure is a 5xx so Bloxity retries instead of refunding.
+- Shutdown: Colyseus's own shutdown handler is disabled (it exits before
+  saves land); ours runs `gracefullyShutdown(false)`, then awaits the flush.
 - Rebirth state is server-authoritative: `RebirthService` alone decides
   eligibility and performs the reset.
 - Speed is granted in exactly one place: `SpeedService` on the server. It is
@@ -481,6 +500,14 @@ api.bloxity.io) - there is one code path, never a branch on environment.
   `onUserChanged` reports a real change, because a guest who logs in after
   joining would otherwise stay known to everyone by their guest name, with no
   account to befriend.
+- **Identity is re-sent whenever it differs from what the ROOM has**, never
+  gated on the account id changing: the SDK announces one login more than once
+  (restored, then refreshed from its API) and a login can land after the join,
+  so an id-only check left signed-in players with their guest name overhead
+  and on the boards. `NetworkClient.updateIdentity` does the comparison.
+- A signed-in account's `pfp` is a PATH (`/pfps/s0.png`); `resolvePfpUrl`
+  turns it into the CDN URL exactly as the SDK's `pfpUrlFromPath` does. Only
+  guest pictures arrive as URLs.
 - **A player is their Bloxity DISPLAY NAME, everywhere it is shown** - the
   plate over their head, all three boards, the panel. Never an `@handle`,
   never the session id, and never the internal `playerId`. The boards used to
@@ -509,10 +536,10 @@ and auras multiply trophy rewards.
 
 Milestone 8 (durable persistence and treadmills) is complete.
 
-Profiles are now written to disk behind a `PersistenceAdapter`, so progression
-survives a server RESTART, not just a reconnect. The shipped adapter is a
-single JSON file under `server/data/`, written debounced and ATOMICALLY - temp
-file, fsynced, then renamed - so a crash mid-write cannot corrupt a save. The
+Profiles are written behind a `PersistenceAdapter`: Bloxity's managed MongoDB
+in production (see Architecture rules), and in development a single JSON file
+under `server/data/`, written debounced and ATOMICALLY - temp file, fsynced,
+then renamed - so a crash mid-write cannot corrupt a save. The
 room also autosaves every connected player every 15s, because Speed accrues
 continuously between the discrete events that otherwise trigger a save.
 

@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { logger } from '../util/logger.js';
-import type { PersistenceAdapter, StoredProfile } from './PersistenceAdapter.js';
+import { sanitiseProfile, type PersistenceAdapter, type StoredProfile } from './PersistenceAdapter.js';
 
 const SCOPE = 'JsonFilePersistence';
 
@@ -28,11 +28,10 @@ interface ProfileFile {
   profiles: Record<string, StoredProfile>;
 }
 
-const finite = (value: unknown, fallback: number): number =>
-  typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-
 /**
- * Profiles in a single JSON file on the server's disk.
+ * Profiles in a single JSON file on the server's disk - LOCAL DEVELOPMENT.
+ * On Bloxity Hosting the disk does not survive a deploy; `MONGODB_URI` is set
+ * there and `MongoPersistence` is used instead.
  *
  * Enough to survive a restart, deploy or crash without standing up a database,
  * and small enough to read and hand-edit while the game is still being built.
@@ -55,54 +54,44 @@ export class JsonFilePersistence implements PersistenceAdapter {
     this.path = join(directory, fileName);
   }
 
-  open(): ReadonlyMap<string, StoredProfile> {
+  open(): Promise<ReadonlyMap<string, StoredProfile>> {
     this.cache.clear();
 
     if (!existsSync(this.path)) {
       logger.info(SCOPE, `no save at ${this.path} - starting empty`);
-      return this.cache;
+      return Promise.resolve(this.cache);
     }
 
     try {
       const parsed = JSON.parse(readFileSync(this.path, 'utf8')) as Partial<ProfileFile>;
       if (parsed?.version !== FILE_VERSION) {
-        logger.warn(
-          SCOPE,
-          `save version ${String(parsed?.version)} != ${FILE_VERSION}, ignoring`,
-        );
-        return this.cache;
+        throw new Error(`save version ${String(parsed?.version)} != ${FILE_VERSION}`);
       }
       for (const [playerId, raw] of Object.entries(parsed.profiles ?? {})) {
         if (!playerId) continue;
-        this.cache.set(playerId, {
-          totalSpeed: Math.max(0, finite(raw?.totalSpeed, 0)),
-          wins: Math.max(0, Math.floor(finite(raw?.wins, 0))),
-          rebirths: Math.max(0, Math.floor(finite(raw?.rebirths, 0))),
-          ownedBoots: Math.max(0, Math.floor(finite(raw?.ownedBoots, 1))),
-          // Absent in saves written before cosmetics existed; defaulting here
-          // rather than bumping the file version is what lets those saves keep
-          // loading instead of being discarded.
-          ownedTrails: Math.max(0, Math.floor(finite(raw?.ownedTrails, 0))),
-          trailSlot: Math.max(0, Math.floor(finite(raw?.trailSlot, 0))),
-          ownedAuras: Math.max(0, Math.floor(finite(raw?.ownedAuras, 0))),
-          auraSlot: Math.max(0, Math.floor(finite(raw?.auraSlot, 0))),
-          // Identity, absent in every save written before the leaderboards
-          // showed real names. Capped on the way in as well as on the way out:
-          // a hand-edited save must not be able to put an unbounded string on
-          // another player's scoreboard.
-          legionName: typeof raw?.legionName === 'string' ? raw.legionName.slice(0, 32) : '',
-          legionPfp: typeof raw?.legionPfp === 'string' ? raw.legionPfp.slice(0, 300) : '',
-        });
+        this.cache.set(playerId, sanitiseProfile(raw));
       }
       logger.info(SCOPE, `loaded ${this.cache.size} profiles from ${this.path}`);
     } catch (error: unknown) {
-      // A corrupt save must not stop the server: the game starts fresh and the
-      // next write replaces the bad file.
-      logger.error(SCOPE, `could not read ${this.path}, starting empty`, error);
+      // An unreadable save is MOVED ASIDE, never overwritten: the next write
+      // would otherwise replace every player's progress with an empty file.
+      const aside = `${this.path}.unreadable-${Date.now()}`;
+      try {
+        renameSync(this.path, aside);
+      } catch {
+        // Nothing more to do; the error below is what matters.
+      }
+      logger.error(SCOPE, `could not read ${this.path} - kept it as ${aside}, starting empty`, error);
       this.cache.clear();
     }
 
-    return this.cache;
+    return Promise.resolve(this.cache);
+  }
+
+  /** One process owns the file, so its own map is always the freshest copy. */
+  get(playerId: string): Promise<StoredProfile | null> {
+    const profile = this.cache.get(playerId);
+    return Promise.resolve(profile ? { ...profile } : null);
   }
 
   put(playerId: string, profile: StoredProfile): void {
@@ -118,7 +107,12 @@ export class JsonFilePersistence implements PersistenceAdapter {
     this.timer.unref?.();
   }
 
-  flush(): void {
+  flush(): Promise<void> {
+    this.flushSync();
+    return Promise.resolve();
+  }
+
+  flushSync(): void {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;

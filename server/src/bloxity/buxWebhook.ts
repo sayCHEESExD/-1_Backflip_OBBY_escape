@@ -55,7 +55,7 @@ export const handleBuxWebhook = (
   }
 
   readBody(req)
-    .then((body) => {
+    .then(async (body) => {
       let payload: BuxWebhookPayload;
       try {
         payload = JSON.parse(body) as BuxWebhookPayload;
@@ -64,7 +64,9 @@ export const handleBuxWebhook = (
         return;
       }
 
-      const outcome = fulfilment.fulfil(payload);
+      // Awaited: 200 is only sent once the credit is durable. If storage is
+      // unreachable this throws, and the 5xx below makes Bloxity retry.
+      const outcome = await fulfilment.fulfil(payload);
       if (outcome.status === 'rejected') {
         // A 4xx here is deliberate: the sale cannot be honoured, so the
         // player should get their Bux back rather than pay for nothing.
@@ -82,10 +84,10 @@ export const handleBuxWebhook = (
       });
     })
     .catch((error: unknown) => {
-      // A read failure is OUR fault, not the sale's, so this answers 5xx -
-      // which asks Bloxity to retry rather than refunding a good purchase.
-      logger.error(SCOPE, 'failed to read webhook body', error);
-      send(res, 500, { error: 'could not read body' });
+      // A read or storage failure is OUR fault, not the sale's, so this
+      // answers 5xx - which asks Bloxity to retry rather than refunding.
+      logger.error(SCOPE, 'could not fulfil webhook', error);
+      send(res, 500, { error: 'temporarily unable to fulfil' });
     });
 
   return true;

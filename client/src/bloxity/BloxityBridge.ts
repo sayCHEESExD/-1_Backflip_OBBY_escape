@@ -3,7 +3,7 @@ import { AvatarAppearance } from './AvatarAppearance.js';
 import { encodeAvatarLook, type AvatarLook } from '@obby/shared';
 import { bloxity, visibleName } from './BloxitySdk.js';
 import { BloxityPanel, type RoomPlayer } from './BloxityPanel.js';
-import { SETTING_KEYS, settingBool, settingNumber } from './bloxityConfig.js';
+import { SETTING_KEYS, resolvePfpUrl, settingBool, settingNumber } from './bloxityConfig.js';
 import type { LegionUser, Unsubscribe } from './sdkTypes.js';
 
 const SCOPE = 'BloxityBridge';
@@ -143,8 +143,8 @@ export class BloxityBridge {
    */
   get playerPfp(): string {
     const user = bloxity.getUser();
-    if (user?.pfp) return user.pfp;
-    return bloxity.getGuest()?.pfp ?? '';
+    if (user?.pfp) return resolvePfpUrl(user.pfp);
+    return resolvePfpUrl(bloxity.getGuest()?.pfp ?? '');
   }
 
   /** Announce the joinable room so a friend's invite lands in the right one. */
@@ -187,19 +187,20 @@ export class BloxityBridge {
         this.applyAvatar();
         this.panel.reloadData();
 
+        // EVERY announcement is passed on: the network layer compares it with
+        // what the room actually has and sends only a real difference. This
+        // must not be gated on the account id changing - the SDK announces
+        // one login more than once (restored, then refreshed from its API),
+        // and the one that finally carries the display name has the same id.
+        this.host.updateIdentity(this.playerName, this.playerUserId, this.playerPfp);
+
         const userId = user?._id ?? null;
         const changed = this.lastUserId !== undefined && userId !== this.lastUserId;
         this.lastUserId = userId;
-        if (!changed) return;
-
         // Settings are synced PER ACCOUNT, so a login brings a different set
         // from the guest defaults. Re-pull them; the registered listeners
         // apply whatever arrives.
-        bloxity.refreshSettings();
-        // Other players know this one by the name and account id sent at join.
-        // A login afterwards changes both - without this, a friend would never
-        // get the "joined" toast or an Add-friend button for them.
-        this.host.updateIdentity(this.playerName, this.playerUserId, this.playerPfp);
+        if (changed) bloxity.refreshSettings();
       }),
     );
   }

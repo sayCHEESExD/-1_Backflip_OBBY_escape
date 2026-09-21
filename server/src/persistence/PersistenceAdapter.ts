@@ -2,15 +2,17 @@
  * The persistence boundary.
  *
  * Everything above this interface deals in whole profiles and never knows how
- * or where they are stored, so swapping the JSON file for a real database is a
- * matter of writing one more adapter and changing `createPersistence`.
+ * or where they are stored. Two adapters exist: Bloxity's managed MongoDB in
+ * production (`MONGODB_URI`), and a JSON file for local development.
  *
- * The read side is deliberately SYNCHRONOUS and whole-store: profiles are tiny,
- * a room joins players on the hot path, and loading everything once at boot
- * keeps `onJoin` free of awaits. A database adapter satisfies this by
- * populating its cache during `open()` and writing behind in `put`.
+ * The container's own disk is NOT durable on Bloxity Hosting - a deploy
+ * replaces the container and an idle game scales to zero - which is why a
+ * JSON file there lost every player's progress on each update.
+ *
+ * Reads that DECIDE a player's progress go through `get`, fresh from the
+ * store, at join time: several server instances can run at once, so a copy
+ * cached at boot may be older than what another instance has since saved.
  */
-
 /** The earned progression that outlives a session. */
 export interface StoredProfile {
   totalSpeed: number;
@@ -41,18 +43,57 @@ export interface PersistenceAdapter {
   /**
    * Prepare the store and return everything it holds.
    *
-   * Called once at startup, before any client can join. A store that cannot be
-   * read must return an empty map rather than throwing: losing saved progress
-   * is bad, refusing to start the game is worse.
+   * Used to seed the global leaderboards, which rank players who are offline.
+   * REJECTS when the store is unreachable - the caller retries rather than
+   * starting from an empty map that saves would then write over.
    */
-  open(): ReadonlyMap<string, StoredProfile>;
+  open(): Promise<ReadonlyMap<string, StoredProfile>>;
 
   /**
-   * Record one profile. May be batched or written behind; callers treat it as
-   * fire-and-forget and rely on `flush` for durability at shutdown.
+   * One player's stored profile, read fresh. Null when they have none.
+   * REJECTS when the store is unreachable, so a join can be refused rather
+   * than starting that player from zero and saving the zero over their save.
+   */
+  get(playerId: string): Promise<StoredProfile | null>;
+
+  /**
+   * Record one profile. Written behind and retried until it lands; callers
+   * rely on `flush` for durability at shutdown.
    */
   put(playerId: string, profile: StoredProfile): void;
 
-  /** Force everything pending to durable storage. Safe to call repeatedly. */
-  flush(): void;
+  /** Write everything pending. Resolves once it is durable (or gives up). */
+  flush(): Promise<void>;
+
+  /**
+   * Best-effort synchronous flush for the process `exit` hook, where nothing
+   * asynchronous can run. Only a local file can honour it.
+   */
+  flushSync?(): void;
+
+  /** Release connections at shutdown. */
+  close?(): Promise<void>;
 }
+
+const finite = (value: unknown, fallback: number): number =>
+  typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+
+/**
+ * Coerce a stored record into a valid profile.
+ *
+ * Every adapter reads through this, so a field added later simply defaults on
+ * old records, and a hand-edited or partial record cannot put an unbounded
+ * string on another player's scoreboard or a negative count into a wallet.
+ */
+export const sanitiseProfile = (raw: Partial<Record<keyof StoredProfile, unknown>> | null | undefined): StoredProfile => ({
+  totalSpeed: Math.max(0, finite(raw?.totalSpeed, 0)),
+  wins: Math.max(0, Math.floor(finite(raw?.wins, 0))),
+  rebirths: Math.max(0, Math.floor(finite(raw?.rebirths, 0))),
+  ownedBoots: Math.max(0, Math.floor(finite(raw?.ownedBoots, 1))),
+  ownedTrails: Math.max(0, Math.floor(finite(raw?.ownedTrails, 0))),
+  trailSlot: Math.max(0, Math.floor(finite(raw?.trailSlot, 0))),
+  ownedAuras: Math.max(0, Math.floor(finite(raw?.ownedAuras, 0))),
+  auraSlot: Math.max(0, Math.floor(finite(raw?.auraSlot, 0))),
+  legionName: typeof raw?.legionName === 'string' ? raw.legionName.slice(0, 32) : '',
+  legionPfp: typeof raw?.legionPfp === 'string' ? raw.legionPfp.slice(0, 300) : '',
+});
