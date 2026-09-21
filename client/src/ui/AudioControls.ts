@@ -98,8 +98,8 @@ const injectStyles = (): void => {
   style.textContent = `
 .obby-audio {
   position: fixed;
-  left: calc(12px * var(--obby-ui-scale, 1));
-  top: calc(var(--obby-rail-top, 298px) * var(--obby-ui-scale, 1));
+  left: calc(var(--obby-safe-l, 0px) + 12px * var(--obby-ui-scale, 1));
+  top: calc(50% + (var(--obby-rail-top, 298px) - var(--obby-rail-center, 262px)) * var(--obby-ui-scale, 1));
   width: calc(68px * var(--obby-ui-scale, 1));
   display: flex;
   flex-direction: column;

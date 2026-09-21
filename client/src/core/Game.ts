@@ -38,6 +38,7 @@ import {
   type ActionId,
 } from '../config/menuKeys.js';
 import { iconMarkup } from '../config/uiIcons.js';
+import { installHudScale } from '../ui/uiScale.js';
 import { injectMobileStyles } from '../ui/mobileStyles.js';
 import { modalLayer } from '../ui/ModalLayer.js';
 import { RebirthPanel } from '../ui/RebirthPanel.js';
@@ -155,6 +156,8 @@ export class Game {
   constructor(container: HTMLElement) {
     // Responsive overrides FIRST, so every panel built below is laid out for
     // this screen on its first paint rather than after a reflow.
+    // ONE responsive scale for the whole HUD, driven by the viewport.
+    installHudScale();
     injectMobileStyles();
     this.renderer = new RendererManager(container);
     this.remotePlayers = new RemotePlayerManager(this.sceneManager.scene);

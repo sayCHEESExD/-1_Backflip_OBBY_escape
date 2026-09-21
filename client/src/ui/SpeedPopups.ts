@@ -113,7 +113,7 @@ const injectStyles = (): void => {
   position: absolute;
   transform: translate(-50%, -50%);
   font-family: system-ui, "Segoe UI", Roboto, sans-serif;
-  font-size: clamp(18px, 3.2vw, 34px);
+  font-size: clamp(15px, calc(26px * var(--obby-ui-scale, 1)), 42px);
   font-weight: 800;
   color: #ffffff;
   white-space: nowrap;

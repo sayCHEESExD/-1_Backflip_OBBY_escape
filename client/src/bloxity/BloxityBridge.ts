@@ -389,8 +389,9 @@ const injectChatStyles = (): void => {
   style.textContent = `
 .obby-chat {
   position: fixed;
-  left: calc(96px * var(--obby-ui-scale, 1));
-  bottom: calc(74px * var(--obby-ui-scale, 1));
+  left: calc(var(--obby-safe-l, 0px) + 96px * var(--obby-ui-scale, 1));
+  /* Above the touch stick when there is one; otherwise near the bottom edge. */
+  bottom: var(--obby-chat-bottom, calc(var(--obby-safe-b, 0px) + 74px * var(--obby-ui-scale, 1)));
   display: grid;
   gap: 4px;
   max-width: min(420px, 46vw);

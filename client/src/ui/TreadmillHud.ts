@@ -104,10 +104,15 @@ const injectStyles = (): void => {
 .obby-tread {
   position: fixed;
   left: 50%;
-  bottom: 142px;
+  /* Stacked just above the progress HUD, on the same anchor, at any size. */
+  bottom: calc(
+    var(--obby-hud-bottom, calc(var(--obby-safe-b, 0px) + 18px * var(--obby-ui-scale, 1)))
+      + 91px * var(--obby-ui-scale, 1)
+  );
   transform: translateX(-50%);
-  padding: 6px 14px;
-  border-radius: 8px;
+  max-width: calc(100vw - 24px);
+  padding: calc(5px * var(--obby-ui-scale, 1)) calc(11px * var(--obby-ui-scale, 1));
+  border-radius: calc(6px * var(--obby-ui-scale, 1));
   background: rgba(14, 22, 34, 0.72);
   border: 2px solid #16202e;
   text-align: center;
@@ -117,13 +122,13 @@ const injectStyles = (): void => {
   z-index: 20;
 }
 .obby-tread__title {
-  font-size: clamp(13px, 2.1vw, 17px);
+  font-size: clamp(11px, calc(13px * var(--obby-ui-scale, 1)), 21px);
   font-weight: 800;
   color: #7ef0c0;
   letter-spacing: 0.02em;
 }
 .obby-tread__detail {
-  font-size: clamp(11px, 1.8vw, 14px);
+  font-size: clamp(10px, calc(11px * var(--obby-ui-scale, 1)), 17px);
   font-weight: 700;
   color: #ffffff;
   opacity: 0.9;

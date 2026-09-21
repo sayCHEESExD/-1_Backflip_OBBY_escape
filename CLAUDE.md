@@ -365,6 +365,18 @@ Procedural, bone-driven, and required for the finished game — not a placeholde
   the client and server must agree on go in `shared/`, never duplicated.
 - `shared/` must not import `three`, `colyseus`, or anything DOM.
 - The client touches `colyseus.js` only inside `client/src/net/`.
+- **The HUD has ONE scaling system**: `client/src/ui/uiScale.ts` sets
+  `--obby-ui-scale` from the live viewport (proportional to a 1366x768 design
+  at 1.3, clamped to 0.66-1.6, and capped so the left rail always fits), and
+  every HUD metric is `design px * var(--obby-ui-scale)`. Never give a
+  platform its own fixed sizes - that is how phones got a desktop-sized
+  column - and never write `if mobile -> scale = X`.
+- Anchors are fixed: the left rail is LEFT + VERTICAL CENTRE (each tile at
+  `50% + (railTop - --obby-rail-center) * scale`), the progress bar BOTTOM +
+  HORIZONTAL CENTRE on `--obby-hud-bottom`. `mobileStyles.ts` may only move
+  things clear of the touch controls (keyed on `body.obby-touch-mode`, not on
+  a device size), using the stick radius TouchControls publishes as
+  `--obby-stick-r`.
 - The client touches `window.Legion` - the Bloxity SDK - only inside
   `client/src/bloxity/`, and only through the `bloxity` façade in
   `BloxitySdk.ts`. The SDK is a third-party script from a CDN, so it can be

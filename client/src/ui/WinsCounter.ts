@@ -58,8 +58,8 @@ const injectStyles = (): void => {
   style.textContent = `
 .obby-wins {
   position: fixed;
-  left: calc(14px * var(--obby-ui-scale, 1));
-  top: calc(14px * var(--obby-ui-scale, 1));
+  left: calc(var(--obby-safe-l, 0px) + 14px * var(--obby-ui-scale, 1));
+  top: calc(var(--obby-safe-t, 0px) + 14px * var(--obby-ui-scale, 1));
   display: flex;
   align-items: center;
   gap: calc(8px * var(--obby-ui-scale, 1));

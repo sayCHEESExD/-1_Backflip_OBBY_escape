@@ -288,6 +288,9 @@ export class TouchControls {
     const vmin = Math.min(window.innerWidth, window.innerHeight);
     this.radius = Math.max(RADIUS_MIN, Math.min(vmin * RADIUS_VMIN, RADIUS_MAX));
     this.stick.style.setProperty('--obby-stick-radius', `${this.radius}px`);
+    // Published for the HUD layout, which keeps the progress bar and chat
+    // clear of the stick - one radius, decided here.
+    document.documentElement.style.setProperty('--obby-stick-r', `${this.radius}px`);
     if (this.movePointer === null) this.placeStickAtRest();
   };
 
@@ -381,9 +384,17 @@ const injectStyles = (): void => {
 .obby-touch--hidden { opacity: 0; pointer-events: none; }
 
 .obby-touch__stick {
+  /* Overwritten inline from the viewport by \`resize\`; see RADIUS_*. */
   --obby-stick-radius: 64px;
   position: fixed;
-  left: calc(var(--obby-safe-l, 0px) + 26px + var(--obby-stick-radius));
+  /*
+   * Rests just right of the left rail (80 design px wide at the HUD scale),
+   * so the vertically centred rail and the stick never cover each other on a
+   * short landscape screen.
+   */
+  left: calc(
+    var(--obby-safe-l, 0px) + max(26px, 92px * var(--obby-ui-scale, 1)) + var(--obby-stick-radius)
+  );
   top: auto;
   bottom: calc(var(--obby-safe-b, 0px) + 26px);
   width: calc(var(--obby-stick-radius) * 2);

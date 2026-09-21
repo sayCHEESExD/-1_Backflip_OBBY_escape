@@ -273,8 +273,8 @@ const injectStyles = (): void => {
  */
 .obby-cos-btn {
   position: fixed;
-  left: calc(12px * var(--obby-ui-scale, 1));
-  top: calc(var(--obby-rail-top, 70px) * var(--obby-ui-scale, 1));
+  left: calc(var(--obby-safe-l, 0px) + 12px * var(--obby-ui-scale, 1));
+  top: calc(50% + (var(--obby-rail-top, 70px) - var(--obby-rail-center, 262px)) * var(--obby-ui-scale, 1));
   width: calc(68px * var(--obby-ui-scale, 1));
   height: calc(68px * var(--obby-ui-scale, 1));
   display: flex;

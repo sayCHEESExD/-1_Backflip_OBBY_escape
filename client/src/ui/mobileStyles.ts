@@ -6,11 +6,14 @@
  * "mostly" preserved, it is literally the same cascade it always was. Nothing
  * here changes what a panel does; it changes where it sits and how big it is.
  *
- * Every override requires BOTH a small screen and `body.obby-touch-mode` - the
- * class the input layer adds when the on-screen controls actually appear. A
- * desktop browser window dragged narrow therefore keeps the desktop layout: a
- * width breakpoint alone would have recompacted the rail on any half-screen
- * window, which is a desktop change however small.
+ * HUD SIZE is not decided here. It comes from the one responsive scale in
+ * `ui/uiScale.ts`, which every component multiplies its design px by - this
+ * file used to swap in a separate set of fixed pixel sizes for phones, and
+ * any phone that missed the breakpoint got the full desktop column instead.
+ *
+ * Every override here requires BOTH a small screen and `body.obby-touch-mode`
+ * - the class the input layer adds when the on-screen controls actually
+ * appear - because all it does is keep things clear of those controls.
  *
  * The `body.obby-touch-mode` prefix (specificity 0,2,1) also beats the
  * components' own single-class rules regardless of which stylesheet the
@@ -37,6 +40,13 @@ export const injectMobileStyles = (): void => {
  * notch and the home indicator without repeating env() everywhere.
  */
 :root {
+  /*
+   * The touch stick's radius. TouchControls writes the live value here; this
+   * is the same rule (15% of the short axis, 46-84px) for before it runs.
+   */
+  --obby-stick-r: clamp(46px, 15vmin, 84px);
+  /* Where the resting stick ends on the right: rail clearance + its diameter. */
+  --obby-stick-right: calc(max(26px, 92px * var(--obby-ui-scale, 1)) + 2 * var(--obby-stick-r) + 6px);
   --obby-safe-t: env(safe-area-inset-top, 0px);
   --obby-safe-r: env(safe-area-inset-right, 0px);
   --obby-safe-b: env(safe-area-inset-bottom, 0px);
@@ -44,64 +54,6 @@ export const injectMobileStyles = (): void => {
 }
 
 @media ${SMALL} {
-  /*
-   * The desktop rail scale does not apply on a phone: the compact sizes below
-   * are absolute, and a 2x column would take a third of the screen.
-   */
-  body.obby-touch-mode { --obby-ui-scale: 1; }
-
-  /* ---- The left rail: smaller tiles, restacked to fit a short screen. ---- */
-  body.obby-touch-mode .obby-wins {
-    left: calc(var(--obby-safe-l) + 8px);
-    top: calc(var(--obby-safe-t) + 8px);
-    padding: 4px 11px 4px 7px;
-  }
-  body.obby-touch-mode .obby-rebirth-btn,
-  body.obby-touch-mode .obby-cos-btn,
-  body.obby-touch-mode .obby-blox-btn,
-  body.obby-touch-mode .obby-audio {
-    left: calc(var(--obby-safe-l) + 8px);
-    width: 54px;
-  }
-  body.obby-touch-mode .obby-rebirth-btn,
-  body.obby-touch-mode .obby-cos-btn,
-  body.obby-touch-mode .obby-blox-btn {
-    height: 54px;
-    border-radius: 11px;
-    font-size: 10px;
-  }
-  body.obby-touch-mode .obby-blox-btn__icon { font-size: 26px; }
-  /* Same proportions as desktop - roughly 78% of the tile - at mobile size. */
-  body.obby-touch-mode .obby-rebirth-btn__icon,
-  body.obby-touch-mode .obby-cos-btn__icon { font-size: 41px; }
-  body.obby-touch-mode .obby-rebirth-btn__label,
-  body.obby-touch-mode .obby-cos-btn__label { margin-top: -7px; }
-
-  /* Desktop tops are 70 / 146 / 222 / 298 (step 76); mobile is 52 / 112 / 172 / 232. */
-  body.obby-touch-mode .obby-rebirth-btn { top: calc(var(--obby-safe-t) + 52px); }
-  body.obby-touch-mode .obby-cos-btn { top: calc(var(--obby-safe-t) + 52px + (var(--obby-rail-top, 70px) - 70px) * 0.79); }
-  body.obby-touch-mode .obby-audio {
-    top: auto;
-    bottom: auto;
-    top: calc(var(--obby-safe-t) + 232px);
-  }
-  body.obby-touch-mode .obby-audio__btn { width: 54px; height: 36px; }
-  body.obby-touch-mode .obby-audio__slider { width: 52px; }
-  /* Below the audio block, which is a tile plus its slider rather than a
-     plain tile, so it does not sit on the 60px step the others use. */
-  body.obby-touch-mode .obby-blox-btn { top: calc(var(--obby-safe-t) + 300px); }
-
-  /*
-   * The HUD sits ABOVE the touch controls rather than beside them: the stick
-   * owns the bottom-left and the jump button the bottom-right, so anything
-   * centred at the bottom edge would be under a thumb.
-   */
-  body.obby-touch-mode .obby-hud {
-    width: min(680px, calc(100vw - 130px));
-    bottom: calc(var(--obby-safe-b) + 124px);
-  }
-  body.obby-touch-mode .obby-tread { bottom: calc(var(--obby-safe-b) + 210px); }
-
   /* ---- Panels: fill the small screen and scroll inside. ---- */
   body.obby-touch-mode .obby-cos__card,
   body.obby-touch-mode .obby-rebirth__card {
@@ -132,30 +84,41 @@ export const injectMobileStyles = (): void => {
 }
 
 @media ${LANDSCAPE} {
-  /*
-   * Held sideways there is no vertical room for a five-tile column, so the
-   * rail runs along the top edge instead, clear of both thumbs.
-   */
-  body.obby-touch-mode .obby-rebirth-btn,
-  body.obby-touch-mode .obby-cos-btn,
-  body.obby-touch-mode .obby-blox-btn,
-  body.obby-touch-mode .obby-audio {
-    top: calc(var(--obby-safe-t) + 6px);
-  }
-  body.obby-touch-mode .obby-rebirth-btn { left: calc(var(--obby-safe-l) + 118px); }
-  body.obby-touch-mode .obby-cos-btn {
-    left: calc(var(--obby-safe-l) + 118px + (var(--obby-rail-top, 70px) - 70px) * 0.79);
-  }
-  body.obby-touch-mode .obby-audio { left: calc(var(--obby-safe-l) + 298px); }
-  body.obby-touch-mode .obby-blox-btn { left: calc(var(--obby-safe-l) + 358px); }
-  body.obby-touch-mode .obby-wins { top: calc(var(--obby-safe-t) + 6px); }
-
-  body.obby-touch-mode .obby-hud { bottom: calc(var(--obby-safe-b) + 8px); width: min(420px, 46vw); }
-  body.obby-touch-mode .obby-tread { bottom: calc(var(--obby-safe-b) + 74px); }
-
   body.obby-touch-mode .obby-cos__card,
   body.obby-touch-mode .obby-rebirth__card {
     max-height: calc(100dvh - var(--obby-safe-t) - var(--obby-safe-b) - 8px);
+  }
+}
+
+/*
+ * Touch controls on screen, on ANY device - phone or tablet: the HUD must
+ * stay clear of them. Sizes are not touched: every HUD metric already scales
+ * with the viewport through --obby-ui-scale (ui/uiScale.ts), and the left
+ * rail stays anchored left-middle exactly as everywhere else.
+ *
+ * Default: the progress bar rises to sit just ABOVE the resting stick, since
+ * a narrow screen has no room beside it.
+ */
+body.obby-touch-mode {
+  --obby-hud-bottom: calc(var(--obby-safe-b) + 26px + 2 * var(--obby-stick-r) + 18px);
+  /* Portal chat lines rise from just above the stick too. */
+  --obby-chat-bottom: calc(var(--obby-safe-b) + 26px + 2 * var(--obby-stick-r) + 18px);
+}
+/*
+ * Wide enough for the bar to fit BETWEEN the stick and the jump button: it
+ * stays on the bottom edge, narrowed to the gap. Centred, so clearing the
+ * stick (the wider of the two zones) clears the jump button as well.
+ */
+@media (min-width: 560px) {
+  body.obby-touch-mode {
+    --obby-hud-bottom: calc(var(--obby-safe-b) + 10px);
+  }
+  body.obby-touch-mode .obby-hud {
+    width: clamp(
+      180px,
+      calc(100vw - 2 * (var(--obby-stick-right) + 18px)),
+      calc(523px * var(--obby-ui-scale, 1))
+    );
   }
 }
 
