@@ -45,6 +45,12 @@ const MAX_STEPS_PER_FRAME = 5;
  */
 const DEATH_DURATION = 0.22;
 
+/**
+ * Ground speed above which footsteps sound. Below it the player is standing -
+ * or drifting to a stop, which should fall silent rather than shuffle.
+ */
+const WALK_SOUND_MIN_SPEED = 0.8;
+
 /** Seconds the character pops back up to full size after arriving at spawn. */
 const ARRIVE_DURATION = 0.13;
 
@@ -258,6 +264,28 @@ export class LocalPlayer {
    */
   get justLanded(): boolean {
     return this.events.landed;
+  }
+
+  /**
+   * True on the frame the player jumped off the ground.
+   *
+   * The simulation's own `jumpStarted` edge, ORed across the frame's
+   * substeps. It is raised only by a GROUNDED press - an airborne press is a
+   * backflip and raises `backflipRequested` instead - and reconciliation
+   * replays into separate events, so a replayed jump never re-fires it.
+   */
+  get justJumped(): boolean {
+    return this.events.jumpStarted;
+  }
+
+  /**
+   * Whether the character is running on its feet right now: grounded, alive,
+   * and either moving or running on a treadmill belt. What footsteps follow.
+   */
+  get isWalking(): boolean {
+    if (this.isDying || !this.motion.grounded) return false;
+    if (this.motion.treadmillTier > 0) return true;
+    return this.horizontalSpeed > WALK_SOUND_MIN_SPEED;
   }
 
   get animationState(): PlayerAnimationState {
@@ -565,6 +593,12 @@ export class LocalPlayer {
     this.flipsStarted = 0;
 
     if (this.deathTime >= 0) {
+      // No step runs, so no edge can happen - clear the last live frame's, or
+      // a jump or landing on the frame of death would read as repeating for
+      // the whole transition.
+      this.events.jumpStarted = false;
+      this.events.landed = false;
+      this.events.backflipRequested = false;
       this.deathTime += delta;
       this.applyDeathScale();
       // The LOCAL simulation is frozen, but the server's must not be. It

@@ -18,6 +18,10 @@ export const ASSET_PATHS = {
   playerTexture: '/player/green.png',
   /** The background music track (assets/audio/background.mp3). */
   backgroundMusic: '/audio/background.mp3',
+  /** Recorded effects (assets/audio/), played by audio/Samples.ts. */
+  jumpSound: '/audio/jump.mp3',
+  deathSound: '/audio/death.mp3',
+  walkSound: '/audio/walk.mp3',
 } as const;
 
 /**

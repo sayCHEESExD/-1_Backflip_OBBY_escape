@@ -391,6 +391,20 @@ export class Game {
 
       // One landing, one effect. `justLanded` is the simulation's own edge, so
       // it cannot fire while merely standing.
+      // A NORMAL jump off the ground - the simulation's own edge, which a flip
+      // never raises (flips have their own sound below).
+      if (player.justJumped) this.audio.jump();
+
+      // One death, one sound: the run controller's edge fires only on the
+      // frame a death begins. Banking a trophy uses the same transition but
+      // is a reward, not a death - it gets the Win fanfare instead.
+      const death = this.run.deathStartedThisFrame;
+      if (death === 'fell' || death === 'redline') this.audio.death();
+
+      // Footsteps while actually running on the ground - or on a treadmill
+      // belt, where the character runs in place.
+      this.audio.setWalking(player.isWalking);
+
       if (player.justLanded) {
         this.audio.land();
         this.debris.burst(player.position.x, player.position.y, player.position.z);

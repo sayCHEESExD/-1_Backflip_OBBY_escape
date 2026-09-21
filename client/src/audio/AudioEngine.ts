@@ -1,5 +1,6 @@
 import { logger } from '../util/logger.js';
 import { MusicTrack } from './MusicTrack.js';
+import { Samples } from './Samples.js';
 import { Sfx } from './Sfx.js';
 
 const SCOPE = 'AudioEngine';
@@ -29,6 +30,7 @@ export class AudioEngine {
   /** Music level from the portal settings, applied when the graph is built. */
   private musicLevel = 1;
   private sfx: Sfx | null = null;
+  private samples: Samples | null = null;
 
   private volumeValue: number;
   private mutedValue: boolean;
@@ -140,6 +142,27 @@ export class AudioEngine {
     this.sfx?.backflip(chainIndex);
   }
 
+  /**
+   * The local player left the ground from a NORMAL jump - never a flip, which
+   * has its own sound in `backflip`.
+   */
+  jump(): void {
+    this.samples?.jump();
+  }
+
+  /** The local player died. One call per death. */
+  death(): void {
+    this.samples?.death();
+  }
+
+  /**
+   * Whether footsteps should be sounding. Call every frame; the loop starts
+   * and stops only on a change, so it never restarts or doubles up.
+   */
+  setWalking(walking: boolean): void {
+    this.samples?.setWalking(walking);
+  }
+
   /** Wins were awarded by the server. One call per award. */
   win(): void {
     this.sfx?.win();
@@ -149,6 +172,7 @@ export class AudioEngine {
     this.detach();
     this.music?.dispose();
     this.sfx?.dispose();
+    this.samples?.dispose();
     void this.ctx?.close();
     this.ctx = null;
   }
@@ -177,6 +201,7 @@ export class AudioEngine {
       this.ctx = ctx;
       this.master = master;
       this.sfx = new Sfx(ctx, master);
+      this.samples = new Samples(ctx, master);
       this.music = new MusicTrack(ctx, master);
       this.music.setLevel(this.musicLevel);
       this.music.start();

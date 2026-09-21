@@ -42,13 +42,32 @@ export class RunController {
 
   private graceTimer = 0;
 
+  /**
+   * How the most recent death began, set on the ONE call that starts it.
+   * Read by `Game` for its once-per-death feedback.
+   */
+  private deathReason: RespawnReason | null = null;
+
   constructor(collision: GorgeCollision, network: RunNetwork) {
     this.collision = collision;
     this.network = network;
   }
 
+  /**
+   * The reason a death STARTED during the last `update`, or null.
+   *
+   * An edge: set only by the call that actually began the death (a player
+   * already dying is ignored), and cleared at the start of every update - so
+   * it is true for exactly one frame per death, whatever the server later
+   * sends about the respawn.
+   */
+  get deathStartedThisFrame(): RespawnReason | null {
+    return this.deathReason;
+  }
+
   /** Evaluate triggers for this frame. Call after the player has moved. */
   update(delta: number, player: LocalPlayer): void {
+    this.deathReason = null;
     if (this.graceTimer > 0) {
       this.graceTimer -= delta;
       return;
@@ -94,6 +113,7 @@ export class RunController {
   die(player: LocalPlayer, reason: RespawnReason): void {
     if (player.isDying) return;
     player.beginDeath();
+    this.deathReason = reason;
     this.claimed.clear();
     this.graceTimer = RESPAWN_GRACE;
     logger.info(SCOPE, `death: ${reason}`);
