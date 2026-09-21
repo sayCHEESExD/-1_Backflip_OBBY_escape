@@ -100,8 +100,10 @@ engine. Do not add a framework or a build tool without a concrete need.
   Available once the player reaches their current max level. It resets level
   and Speed but PRESERVES Wins, boots and every other permanent unlock.
 - **Treadmills** multiply the progression gained per step while the player is
-  running on one. They do NOT change movement speed. Eight tiers stand along
-  the back wall of spawn, each gated by a rebirth count (0/1/3/9/18/36/100/200).
+  running on one. They do NOT change movement speed. Four tiers, gated at
+  rebirth 0/1/3/9, stand along the back wall of spawn as SIX machines: the two
+  lowest tiers are pairs (`TREADMILL_DECKS`, shared config). Every system -
+  collision, sim, server, visuals - iterates that deck list, never the tiers.
 - Using a treadmill is a MOVEMENT STATE, owned by `stepPlayer`: come to a stop
   on an unlocked deck and the machine takes you, pinning position and velocity
   so you run without travelling. Any control at all - a nudge of the stick or

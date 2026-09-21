@@ -3,9 +3,10 @@ import {
   TREADMILL_CONSOLE_Z,
   TREADMILL_DECK_Y,
   TREADMILL_ROW,
-  TREADMILL_TIERS,
+  TREADMILL_DECKS,
   isTreadmillUnlocked,
-  treadmillX,
+  treadmillByTier,
+  type TreadmillDeck,
   type TreadmillTier,
 } from '@obby/shared';
 import {
@@ -40,10 +41,6 @@ const BELT_SPEED_MAX = 2.6;
 /** Tiers at or above this intensity get a lit halo bar over the console. */
 const HALO_INTENSITY = 0.45;
 
-/** Tiers at or above this intensity get orbiting energy cubes. */
-const ORBIT_INTENSITY = 0.7;
-const ORBIT_COUNT = 4;
-
 /** Geometry shared by every machine in the row. */
 interface Parts {
   readonly deck: BoxGeometry;
@@ -51,7 +48,6 @@ interface Parts {
   readonly roller: CylinderGeometry;
   readonly console: BoxGeometry;
   readonly halo: BoxGeometry;
-  readonly orbit: BoxGeometry;
   readonly label: PlaneGeometry;
 }
 
@@ -65,9 +61,6 @@ interface Unit {
   readonly beltMaterial: MeshLambertMaterial;
   readonly labelCanvas: HTMLCanvasElement;
   readonly labelTexture: CanvasTexture;
-  readonly orbiters: Mesh[];
-  /** Phase offset so the row does not pulse in lockstep. */
-  readonly phase: number;
   unlocked: boolean;
 }
 
@@ -79,7 +72,7 @@ interface Unit {
  * renders the row and recolours it from the replicated rebirth count.
  *
  * Every unit shares one geometry per part - deck, rail, roller, console,
- * label - so eight machines cost eight sets of materials rather than eight
+ * label - so six machines cost six sets of materials rather than six
  * models. The belt texture is a single canvas cloned per tier, which gives
  * each deck an independent scroll offset for free.
  */
@@ -100,7 +93,7 @@ export class Treadmills {
     beltSource.wrapT = RepeatWrapping;
     this.textures.push(beltSource);
 
-    // One geometry per PART, reused by all eight machines.
+    // One geometry per PART, reused by every machine in the row.
     const parts: Parts = {
       deck: new BoxGeometry(
         TREADMILL_ROW.beltWidth,
@@ -115,7 +108,6 @@ export class Treadmills {
         TREADMILL_ROW.consoleDepth,
       ),
       halo: new BoxGeometry(TREADMILL_ROW.beltWidth + 0.5, 0.26, 0.26),
-      orbit: new BoxGeometry(0.42, 0.42, 0.42),
       label: new PlaneGeometry(TREADMILL_ROW.beltWidth + 1.2, 2.1),
     };
     this.geometries.push(
@@ -124,16 +116,17 @@ export class Treadmills {
       parts.roller,
       parts.console,
       parts.halo,
-      parts.orbit,
       parts.label,
     );
 
-    for (const tier of TREADMILL_TIERS) {
-      this.units.push(this.buildUnit(tier, beltSource, parts));
+    // One unit per PHYSICAL deck: a paired tier builds two identical machines.
+    for (const deck of TREADMILL_DECKS) {
+      const tier = treadmillByTier(deck.tier);
+      if (tier) this.units.push(this.buildUnit(tier, deck, beltSource, parts));
     }
   }
 
-  /** Scroll the belts and drift the high-tier orbiters. */
+  /** Scroll the belts. */
   update(delta: number): void {
     this.time += delta;
 
@@ -143,16 +136,6 @@ export class Treadmills {
       // A locked machine idles; an unlocked one runs at its tier speed.
       unit.beltTexture.offset.y -= delta * (unit.unlocked ? speed : BELT_SPEED_MIN * 0.3);
 
-      if (unit.orbiters.length === 0) continue;
-      const scale = unit.unlocked ? 1 : 0.6;
-      unit.orbiters.forEach((cube, index) => {
-        const angle = this.time * 1.3 + unit.phase + (index / ORBIT_COUNT) * Math.PI * 2;
-        cube.position.x = Math.cos(angle) * 1.3;
-        cube.position.z = Math.sin(angle) * 1.3;
-        cube.position.y = TREADMILL_DECK_Y + 2.4 + Math.sin(this.time * 2 + angle) * 0.35;
-        cube.rotation.set(angle, angle * 0.7, 0);
-        cube.scale.setScalar(scale);
-      });
     }
   }
 
@@ -172,8 +155,8 @@ export class Treadmills {
       unit.unlocked = unlocked;
 
       // A locked machine is DIMMED toward its tier colour, not repainted a
-      // uniform grey: a player at rebirth 1 still sees eight distinguishable
-      // machines climbing toward the Mythic one, which is the whole point of
+      // uniform grey: a player at rebirth 1 still sees distinguishable
+      // machines climbing toward the Gold one, which is the whole point of
       // the ladder. Unlocking then lights the same colour up.
       unit.frameMaterial.color.set(
         unlocked ? unit.theme.accent : dim(unit.theme.accent, 0.72),
@@ -200,9 +183,14 @@ export class Treadmills {
     for (const texture of this.textures) texture.dispose();
   }
 
-  private buildUnit(tier: TreadmillTier, beltSource: CanvasTexture, parts: Parts): Unit {
+  private buildUnit(
+    tier: TreadmillTier,
+    placement: TreadmillDeck,
+    beltSource: CanvasTexture,
+    parts: Parts,
+  ): Unit {
     const theme = treadmillTheme(tier.tier);
-    const centreX = treadmillX(tier.tier);
+    const centreX = placement.x;
     const group = new Group();
     this.root.add(group);
 
@@ -284,29 +272,6 @@ export class Treadmills {
       group.add(halo);
     }
 
-    // The top tiers get orbiting energy cubes - unlit basic material, so they
-    // read as glowing without costing a light.
-    const orbiters: Mesh[] = [];
-    if (theme.intensity >= ORBIT_INTENSITY) {
-      const orbitMaterial = new MeshBasicMaterial({
-        color: theme.accent,
-        transparent: true,
-        fog: false,
-      });
-      this.materials.push(orbitMaterial);
-      glowMaterials.push(orbitMaterial);
-
-      const holder = new Group();
-      holder.position.set(centreX, 0, TREADMILL_ROW.centerZ);
-      group.add(holder);
-
-      for (let i = 0; i < ORBIT_COUNT; i += 1) {
-        const cube = new Mesh(parts.orbit, orbitMaterial);
-        cube.position.set(0, TREADMILL_DECK_Y + 2.4, 0);
-        holder.add(cube);
-        orbiters.push(cube);
-      }
-    }
 
     // Floating label facing the spawn area, so it reads on approach.
     const labelCanvas = createLabelCanvas();
@@ -341,8 +306,6 @@ export class Treadmills {
       beltMaterial,
       labelCanvas,
       labelTexture,
-      orbiters,
-      phase: tier.tier * 0.8,
       unlocked: false,
     };
   }

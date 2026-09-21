@@ -158,18 +158,14 @@ export interface TreadmillTheme {
 }
 
 /**
- * Eight training machines, reading as a ladder from plain dojo wood up to a
- * crimson spirit engine. Colour, glow and belt speed climb together.
+ * Four training machines, reading as a ladder from plain dojo wood up to a
+ * gold-lit one. Colour, glow and belt speed climb together.
  */
 export const TREADMILL_THEMES: readonly TreadmillTheme[] = [
   { accent: 0xb88a5c, belt: 0xcdbb8a, intensity: 0 },
   { accent: 0xc2783a, belt: 0xc4ae7c, intensity: 0.12 },
   { accent: 0xe8e0d0, belt: 0xbfb088, intensity: 0.25 },
   { accent: 0xf2c14e, belt: 0xc9a864, intensity: 0.45 },
-  { accent: 0x3fd6a8, belt: 0x6fa890, intensity: 0.62 },
-  { accent: 0xff7fb0, belt: 0xc48aa0, intensity: 0.76 },
-  { accent: 0xa66bff, belt: 0x7a64a8, intensity: 0.88 },
-  { accent: 0xff2d55, belt: 0xa04a5a, intensity: 1 },
 ];
 
 /** Theme for a tier, falling back to the starter look. */

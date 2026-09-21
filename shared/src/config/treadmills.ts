@@ -16,7 +16,7 @@ import { SPAWN_PLATFORM } from './gorge.js';
  * treadmill, which is why nothing here needs to guard against spoofing.
  */
 export interface TreadmillTier {
-  /** 1-based tier, matching the row left to right. */
+  /** 1-based tier, rising left to right along the row. */
   readonly tier: number;
   readonly name: string;
   /** Multiplier applied to progression gained per step. */
@@ -26,19 +26,15 @@ export interface TreadmillTier {
 }
 
 /**
- * Eight tiers. The first four multipliers and every rebirth gate are fixed by
- * design; tiers 5-8 ramp geometrically toward the 200-rebirth machine so each
- * unlock is a visible jump rather than a rounding difference.
+ * Four tiers, up to the 9-rebirth machine. The multipliers and rebirth gates
+ * are fixed by design. (Tiers gated at 18 rebirths and above were removed; a
+ * player past rebirth 9 simply has every machine unlocked.)
  */
 export const TREADMILL_TIERS: readonly TreadmillTier[] = [
   { tier: 1, name: 'Starter', multiplier: 1, requiredRebirth: 0 },
   { tier: 2, name: 'Bronze', multiplier: 1.5, requiredRebirth: 1 },
   { tier: 3, name: 'Silver', multiplier: 2, requiredRebirth: 3 },
   { tier: 4, name: 'Gold', multiplier: 3, requiredRebirth: 9 },
-  { tier: 5, name: 'Diamond', multiplier: 5, requiredRebirth: 18 },
-  { tier: 6, name: 'Emerald', multiplier: 8, requiredRebirth: 36 },
-  { tier: 7, name: 'Void', multiplier: 14, requiredRebirth: 100 },
-  { tier: 8, name: 'Mythic', multiplier: 25, requiredRebirth: 200 },
 ];
 
 /** Tier that is being used by nobody - "not on a treadmill". */
@@ -58,9 +54,16 @@ export const NO_TREADMILL = 0;
 export const TREADMILL_ROW = {
   /** Z of the deck centre. */
   centerZ: -22.5,
-  /** X of the first (tier 1) deck, and the spacing between decks. */
+  /** X of the first deck, and the spacing between the two decks of a pair. */
   firstX: -10.5,
   spacingX: 4.8,
+  /**
+   * Spacing between neighbouring decks of DIFFERENT tiers. Wider than a pair,
+   * so the row reads as four booths - and chosen so the last deck lands where
+   * the old eight-machine row ended, keeping the bay's footprint (its floor
+   * and the grass cut around it) exactly as it was.
+   */
+  groupSpacingX: 8,
   /** Deck footprint. Wider across X than deep, matching the row. */
   beltWidth: 3.4,
   beltLength: 6,
@@ -76,9 +79,45 @@ export const TREADMILL_ROW = {
   labelY: 4.2,
 } as const;
 
-/** Centre of a treadmill deck along X. */
-export const treadmillX = (tier: number): number =>
-  TREADMILL_ROW.firstX + (tier - 1) * TREADMILL_ROW.spacingX;
+/** One physical machine: which tier it is, and where it stands. */
+export interface TreadmillDeck {
+  readonly tier: number;
+  /** Centre of the deck along X. */
+  readonly x: number;
+}
+
+/**
+ * How many identical machines each tier gets. The two lowest tiers are the
+ * busiest, so each has a pair; a pair shares its tier's requirement,
+ * multiplier and look exactly - it is two copies of one machine.
+ */
+const DECKS_PER_TIER: Readonly<Record<number, number>> = { 1: 2, 2: 2, 3: 1, 4: 1 };
+
+const buildDecks = (): readonly TreadmillDeck[] => {
+  const decks: TreadmillDeck[] = [];
+  let x = TREADMILL_ROW.firstX;
+  for (const entry of TREADMILL_TIERS) {
+    const count = DECKS_PER_TIER[entry.tier] ?? 1;
+    for (let i = 0; i < count; i += 1) {
+      if (decks.length > 0) {
+        const previous = decks[decks.length - 1] as TreadmillDeck;
+        x += previous.tier === entry.tier ? TREADMILL_ROW.spacingX : TREADMILL_ROW.groupSpacingX;
+      }
+      decks.push({ tier: entry.tier, x });
+    }
+  }
+  return decks;
+};
+
+/**
+ * Every physical treadmill, left to right: 2 x Starter, 2 x Bronze, Silver,
+ * Gold. Collision, the simulation, the server and the visuals all read THIS
+ * list, so a machine exists everywhere or nowhere.
+ */
+export const TREADMILL_DECKS: readonly TreadmillDeck[] = buildDecks();
+
+const FIRST_DECK = TREADMILL_DECKS[0] as TreadmillDeck;
+const LAST_DECK = TREADMILL_DECKS[TREADMILL_DECKS.length - 1] as TreadmillDeck;
 
 /** Walkable height of every treadmill deck. */
 export const TREADMILL_DECK_Y = SPAWN_PLATFORM.topY + TREADMILL_ROW.deckHeight;
@@ -98,12 +137,10 @@ export const TREADMILL_BAY = {
   marginX: 2.6,
   marginZ: 2.2,
   get minX(): number {
-    return treadmillX(1) - TREADMILL_ROW.beltWidth / 2 - this.marginX;
+    return FIRST_DECK.x - TREADMILL_ROW.beltWidth / 2 - this.marginX;
   },
   get maxX(): number {
-    return (
-      treadmillX(TREADMILL_TIERS.length) + TREADMILL_ROW.beltWidth / 2 + this.marginX
-    );
+    return LAST_DECK.x + TREADMILL_ROW.beltWidth / 2 + this.marginX;
   },
   get minZ(): number {
     return TREADMILL_CONSOLE_Z - TREADMILL_ROW.consoleDepth / 2 - 0.8;
@@ -131,8 +168,8 @@ export const treadmillTierAt = (x: number, y: number, z: number): number => {
   if (y < TREADMILL_DECK_Y - 0.6 || y > TREADMILL_DECK_Y + 2.5) return NO_TREADMILL;
 
   const halfWidth = TREADMILL_ROW.beltWidth / 2;
-  for (const entry of TREADMILL_TIERS) {
-    if (Math.abs(x - treadmillX(entry.tier)) <= halfWidth) return entry.tier;
+  for (const deck of TREADMILL_DECKS) {
+    if (Math.abs(x - deck.x) <= halfWidth) return deck.tier;
   }
   return NO_TREADMILL;
 };
@@ -167,15 +204,25 @@ export const treadmillEntryAt = (x: number, y: number, z: number): number => {
   if (y < TREADMILL_DECK_Y - 0.6 || y > TREADMILL_DECK_Y + 1.5) return NO_TREADMILL;
 
   const halfWidth = TREADMILL_ROW.beltWidth / 2 + TREADMILL_ENTRY_MARGIN;
-  for (const entry of TREADMILL_TIERS) {
-    if (Math.abs(x - treadmillX(entry.tier)) <= halfWidth) return entry.tier;
+  for (const deck of TREADMILL_DECKS) {
+    if (Math.abs(x - deck.x) <= halfWidth) return deck.tier;
   }
   return NO_TREADMILL;
 };
 
-/** Where on the belt a player entering at `x` ends up running. */
+/**
+ * Where on the belt a player entering at `x` ends up running.
+ *
+ * A tier can have more than one machine, so the belt is the NEAREST deck of
+ * that tier - the one `treadmillEntryAt` just matched at this same `x`.
+ */
 export const treadmillRunX = (tier: number, x: number): number => {
-  const centre = treadmillX(tier);
+  let centre = Number.NaN;
+  for (const deck of TREADMILL_DECKS) {
+    if (deck.tier !== tier) continue;
+    if (Number.isNaN(centre) || Math.abs(x - deck.x) < Math.abs(x - centre)) centre = deck.x;
+  }
+  if (Number.isNaN(centre)) return x;
   const lane = TREADMILL_LANE_HALF_WIDTH;
   const offset = Number.isFinite(x) ? x - centre : 0;
   return centre + (offset < -lane ? -lane : offset > lane ? lane : offset);

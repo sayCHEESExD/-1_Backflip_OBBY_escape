@@ -3,8 +3,8 @@ import {
   TREADMILL_BAY,
   TREADMILL_CONSOLE_Z,
   TREADMILL_ROW,
-  TREADMILL_TIERS,
-  treadmillX,
+  TREADMILL_DECKS,
+  type TreadmillDeck,
 } from '@obby/shared';
 import {
   BoxGeometry,
@@ -163,15 +163,15 @@ export class TreadmillArea {
     this.geometries.push(back, pillar, cap);
     const timber = toon(WORLD_COLORS.timber);
 
-    const xs: number[] = [];
-    for (let tier = 0; tier <= TREADMILL_TIERS.length; tier += 1) {
-      const left = tier === 0 ? treadmillX(1) - TREADMILL_ROW.spacingX : treadmillX(tier);
-      const right =
-        tier === TREADMILL_TIERS.length
-          ? treadmillX(tier) + TREADMILL_ROW.spacingX
-          : treadmillX(tier + 1);
-      xs.push((left + right) / 2);
+    // A post at each end of the row and between every pair of neighbouring
+    // decks - so a pair shares a bay divider, and the wider gap between tiers
+    // is open floor with its post in the middle of it.
+    const half = TREADMILL_ROW.spacingX / 2;
+    const xs: number[] = [(TREADMILL_DECKS[0] as TreadmillDeck).x - half];
+    for (let i = 0; i < TREADMILL_DECKS.length - 1; i += 1) {
+      xs.push(((TREADMILL_DECKS[i] as TreadmillDeck).x + (TREADMILL_DECKS[i + 1] as TreadmillDeck).x) / 2);
     }
+    xs.push((TREADMILL_DECKS[TREADMILL_DECKS.length - 1] as TreadmillDeck).x + half);
 
     const front = frontZ - 0.6;
     for (const x of xs) {

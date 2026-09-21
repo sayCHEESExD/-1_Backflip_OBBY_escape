@@ -17,8 +17,7 @@ import {
   SPAWN_WALLS,
   TREADMILL_DECK_Y,
   TREADMILL_ROW,
-  TREADMILL_TIERS,
-  treadmillX,
+  TREADMILL_DECKS,
   TROPHY_PLATFORMS,
 } from '../index.js';
 
@@ -96,8 +95,8 @@ export class WorldCollision {
     // The treadmill decks along the back wall of spawn. They are a SHALLOW
     // step - 0.2, inside LANDING_TOLERANCE - so the player walks straight on
     // and off them and the simulation needs no step-up rule of its own.
-    for (const treadmill of TREADMILL_TIERS) {
-      const centreX = treadmillX(treadmill.tier);
+    for (const deck of TREADMILL_DECKS) {
+      const centreX = deck.x;
       this.surfaces.push({
         minX: centreX - TREADMILL_ROW.beltWidth / 2,
         maxX: centreX + TREADMILL_ROW.beltWidth / 2,
