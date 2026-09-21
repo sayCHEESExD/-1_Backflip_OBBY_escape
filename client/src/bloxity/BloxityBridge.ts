@@ -1,6 +1,6 @@
 import { logger } from '../util/logger.js';
 import { AvatarAppearance } from './AvatarAppearance.js';
-import { encodeAvatarLook, type AvatarLook } from '@obby/shared';
+import { encodeAvatarLook, parseAvatarLook, type AvatarLook } from '@obby/shared';
 import { bloxity, visibleName } from './BloxitySdk.js';
 import { BloxityPanel, type RoomPlayer } from './BloxityPanel.js';
 import {
@@ -10,7 +10,7 @@ import {
   settingBool,
   settingNumber,
 } from './bloxityConfig.js';
-import type { LegionUser, Unsubscribe } from './sdkTypes.js';
+import type { LegionEquipped, LegionUser, Unsubscribe } from './sdkTypes.js';
 
 const SCOPE = 'BloxityBridge';
 
@@ -72,6 +72,8 @@ export class BloxityBridge {
   private readonly subscriptions: Unsubscribe[] = [];
 
   private avatar: AvatarAppearance | null = null;
+  /** The equipment the SDK last announced through `onAvatarChanged`. */
+  private equipped: LegionEquipped | null = null;
   private chatEnabled = true;
   private started = false;
 
@@ -209,6 +211,13 @@ export class BloxityBridge {
         const userId = user?._id ?? null;
         const changed = this.lastUserId !== undefined && userId !== this.lastUserId;
         this.lastUserId = userId;
+        // A different account wears different things. The SDK announces the
+        // new equipment right after this; until it does, fall back to the
+        // user object rather than dress the new account in the old one's look.
+        if (changed) {
+          this.equipped = null;
+          this.applyAvatar();
+        }
         // Settings are synced PER ACCOUNT, so a login brings a different set
         // from the guest defaults. Re-pull them; the registered listeners
         // apply whatever arrives.
@@ -219,7 +228,16 @@ export class BloxityBridge {
 
   private subscribeAvatar(): void {
     this.subscriptions.push(
-      bloxity.onAvatarChanged(() => this.applyAvatar()),
+      // The SDK hands every listener its current equipment - `{...state.equipped}`
+      // from the customizer, the portal handshake or its API - and documents it
+      // as what the game should dress the character in. `getEquipped()` reads a
+      // DIFFERENT copy (the user object's `avatar`), which is not updated by
+      // those paths; re-reading it here is what left every player on the
+      // default look and every scoreboard row on the same default icon.
+      bloxity.onAvatarChanged((equipped) => {
+        this.equipped = equipped;
+        this.applyAvatar();
+      }),
       bloxity.onProportionsChanged(() => this.applyAvatar()),
     );
   }
@@ -313,8 +331,13 @@ export class BloxityBridge {
    * through the SDK every time, never cached. Signed in or guest alike.
    */
   get avatarLook(): AvatarLook {
-    const equipped = bloxity.getEquipped();
-    return {
+    // What the SDK last ANNOUNCED the player wearing, when it has announced
+    // anything; `getEquipped()` only as the fallback before that.
+    const equipped = this.equipped ?? bloxity.getEquipped();
+    // Through the same shared cleaner the server applies to remote looks: the
+    // SDK marks an empty slot '-1', and passed through raw that became a
+    // picture key of "_h-1_b-1_hd-1..." and a request for a hat called "-1".
+    return parseAvatarLook(encodeAvatarLook({
       skin: equipped.skinId ?? '',
       hat: equipped.hatId ?? '',
       back: equipped.backId ?? '',
@@ -328,7 +351,7 @@ export class BloxityBridge {
         legR: equipped.legRId ?? '',
       },
       proportions: bloxity.getProportions(),
-    };
+    }));
   }
 
   /**

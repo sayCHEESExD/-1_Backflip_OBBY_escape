@@ -42,6 +42,7 @@ import { installHudScale } from '../ui/uiScale.js';
 import { injectMobileStyles } from '../ui/mobileStyles.js';
 import { modalLayer } from '../ui/ModalLayer.js';
 import { RebirthPanel } from '../ui/RebirthPanel.js';
+import { TrophyPopup } from '../ui/TrophyPopup.js';
 import { SpeedPopups } from '../ui/SpeedPopups.js';
 import { TreadmillHud } from '../ui/TreadmillHud.js';
 import { WinsCounter } from '../ui/WinsCounter.js';
@@ -91,6 +92,7 @@ export class Game {
   private readonly debris = new LandingDebris();
   /** Pooled trophy burst, played when the server awards Wins. */
   private readonly winCups = new WinCups();
+  private readonly trophyPopup: TrophyPopup;
   private readonly network: NetworkClient;
   private readonly world = new GorgeWorld();
   private readonly run: RunController;
@@ -147,6 +149,8 @@ export class Game {
    * is not the moment being celebrated.
    */
   private winCelebrationPending = false;
+  /** Wins the pending celebration paid - what the server's total rose by. */
+  private winCelebrationAmount = 0;
 
   private overlayTimer = 0;
   private frameCount = 0;
@@ -166,6 +170,7 @@ export class Game {
     this.winsCounter = new WinsCounter(container);
     this.rebirthPanel = new RebirthPanel(container, () => this.network.requestRebirth());
     this.speedPopups = new SpeedPopups(container);
+    this.trophyPopup = new TrophyPopup(container);
     this.treadmillHud = new TreadmillHud(container);
 
     // Two shops, one panel: trails multiply movement speed, auras multiply
@@ -405,6 +410,9 @@ export class Game {
         this.winCelebrationPending = false;
         this.audio.win();
         this.winCups.burst(player.position.x, player.position.y, player.position.z);
+        // The cups are small at camera distance; the popup is what reads.
+        this.trophyPopup.show(this.winCelebrationAmount);
+        this.winCelebrationAmount = 0;
       }
     }
 
@@ -470,6 +478,7 @@ export class Game {
     this.audio.dispose();
     this.debris.dispose();
     this.winCups.dispose();
+    this.trophyPopup.dispose();
     this.world.dispose();
     void this.network.disconnect();
     this.renderer.dispose();
@@ -722,6 +731,7 @@ export class Game {
     // baseline, and equal totals do nothing.
     if (this.lastWins >= 0 && player.wins > this.lastWins) {
       this.winCelebrationPending = true;
+      this.winCelebrationAmount += player.wins - this.lastWins;
     }
     this.lastWins = player.wins;
 

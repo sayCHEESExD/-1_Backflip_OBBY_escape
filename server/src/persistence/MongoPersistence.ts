@@ -41,6 +41,12 @@ export class MongoPersistence implements PersistenceAdapter {
 
   /** Newest unsaved snapshot per player. */
   private readonly pending = new Map<string, StoredProfile>();
+  /**
+   * The batch being written right now. Out of `pending` but not yet in the
+   * database, so reads must see it too - a join landing mid-write would
+   * otherwise restore the older stored copy.
+   */
+  private inFlight = new Map<string, StoredProfile>();
   private timer: NodeJS.Timeout | null = null;
   private writing: Promise<void> | null = null;
   private retryMs = WRITE_INTERVAL_MS;
@@ -59,13 +65,17 @@ export class MongoPersistence implements PersistenceAdapter {
     for await (const doc of collection.find({})) {
       profiles.set(doc._id, sanitiseProfile(doc));
     }
+    // Saves still queued are newer than anything in the database; a periodic
+    // reload must never show (or hand back) the older stored copy instead.
+    for (const [playerId, profile] of this.inFlight) profiles.set(playerId, { ...profile });
+    for (const [playerId, profile] of this.pending) profiles.set(playerId, { ...profile });
     logger.info(SCOPE, `loaded ${profiles.size} profiles`);
     return profiles;
   }
 
   async get(playerId: string): Promise<StoredProfile | null> {
     // A save still queued here is newer than anything in the database.
-    const queued = this.pending.get(playerId);
+    const queued = this.pending.get(playerId) ?? this.inFlight.get(playerId);
     if (queued) return { ...queued };
     const collection = await this.connect();
     const doc = await collection.findOne({ _id: playerId });
@@ -140,6 +150,7 @@ export class MongoPersistence implements PersistenceAdapter {
 
     const batch = new Map(this.pending);
     this.pending.clear();
+    this.inFlight = batch;
 
     this.writing = (async () => {
       try {
@@ -168,6 +179,7 @@ export class MongoPersistence implements PersistenceAdapter {
           error instanceof Error ? error.message : error,
         );
       } finally {
+        this.inFlight = new Map();
         this.writing = null;
         if (this.pending.size > 0) this.schedule(this.retryMs);
       }

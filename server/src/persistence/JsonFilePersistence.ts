@@ -49,12 +49,19 @@ export class JsonFilePersistence implements PersistenceAdapter {
   private readonly cache = new Map<string, StoredProfile>();
   private timer: NodeJS.Timeout | null = null;
   private dirty = false;
+  private loaded = false;
 
   constructor(directory: string, fileName = 'profiles.json') {
     this.path = join(directory, fileName);
   }
 
   open(): Promise<ReadonlyMap<string, StoredProfile>> {
+    // This process is the file's only writer, so after the first read its own
+    // map IS the freshest copy. Re-reading (the scoreboard refresh calls this
+    // every minute) would throw away saves still waiting for the debounce -
+    // a trophy collected just before a disconnect, for one.
+    if (this.loaded) return Promise.resolve(this.cache);
+    this.loaded = true;
     this.cache.clear();
 
     if (!existsSync(this.path)) {
