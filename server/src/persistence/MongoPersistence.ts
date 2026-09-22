@@ -1,4 +1,4 @@
-import { MongoClient, type AnyBulkWriteOperation, type Collection } from 'mongodb';
+import { MongoClient, MongoServerError, type AnyBulkWriteOperation, type Collection } from 'mongodb';
 import { logger } from '../util/logger.js';
 import { sanitiseProfile, type PersistenceAdapter, type StoredProfile } from './PersistenceAdapter.js';
 
@@ -10,6 +10,9 @@ const MAX_RETRY_MS = 15_000;
 
 /** How long a shutdown waits for pending saves before giving up. */
 const FLUSH_TIMEOUT_MS = 8_000;
+
+/** MongoDB's duplicate-key error: the document already exists. */
+const DUPLICATE_KEY = 11000;
 
 /** One stored profile. `_id` is the player's id. */
 interface ProfileDocument extends StoredProfile {
@@ -88,6 +91,23 @@ export class MongoPersistence implements PersistenceAdapter {
     this.schedule(WRITE_INTERVAL_MS);
   }
 
+  async insertIfAbsent(playerId: string, profile: StoredProfile): Promise<boolean> {
+    // A profile queued or being written in this process already EXISTS.
+    if (!playerId || this.pending.has(playerId) || this.inFlight.has(playerId)) return false;
+    const collection = await this.connect();
+    try {
+      await collection.insertOne({
+        ...sanitiseProfile(profile),
+        _id: playerId,
+        updatedAt: new Date(),
+      });
+      return true;
+    } catch (error: unknown) {
+      if (error instanceof MongoServerError && error.code === DUPLICATE_KEY) return false;
+      throw error;
+    }
+  }
+
   async flush(): Promise<void> {
     const deadline = Date.now() + FLUSH_TIMEOUT_MS;
     while (this.pending.size > 0 || this.writing) {
@@ -160,7 +180,7 @@ export class MongoPersistence implements PersistenceAdapter {
           ([playerId, profile]) => ({
             updateOne: {
               filter: { _id: playerId },
-              update: { $set: { ...sanitiseProfile(profile), updatedAt: now } },
+              update: withMarkers(sanitiseProfile(profile), now),
               upsert: true,
             },
           }),
@@ -187,3 +207,18 @@ export class MongoPersistence implements PersistenceAdapter {
     return this.writing;
   }
 }
+
+/**
+ * A whole-profile upsert. The migration markers are UNSET when the snapshot
+ * does not carry them: `$set` alone would leave a stale `migratedTo` on a
+ * guest profile that is being played again, hiding its new progress.
+ */
+const withMarkers = (profile: StoredProfile, now: Date): Record<string, unknown> => {
+  const unset: Record<string, ''> = {};
+  if (profile.migratedTo === undefined) unset['migratedTo'] = '';
+  if (profile.migratedFrom === undefined) unset['migratedFrom'] = '';
+  return {
+    $set: { ...profile, updatedAt: now },
+    ...(Object.keys(unset).length > 0 ? { $unset: unset } : {}),
+  };
+};

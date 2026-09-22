@@ -17,6 +17,59 @@ const RELOAD_INTERVAL_MS = 60_000;
 /** The progression worth carrying across a reconnect or a server restart. */
 export type Profile = StoredProfile;
 
+/**
+ * The key a Bloxity ACCOUNT's profile is stored under.
+ *
+ * Namespaced so it can never collide with a guest key, and the namespace is
+ * RESERVED: `guestKeyFrom` refuses any browser-supplied id that starts with
+ * it. Without that, a guest could name their browser id `bloxity:<someone's
+ * account id>` and be handed that account's progress with no login at all.
+ */
+export const ACCOUNT_PREFIX = 'bloxity:';
+
+/** Storage key for an account id THE SERVER VERIFIED with Bloxity. */
+export const accountKey = (accountId: string): string => `${ACCOUNT_PREFIX}${accountId}`;
+
+/**
+ * The guest key a browser asked for, or '' if it cannot have one.
+ *
+ * The same rule as before - whatever id this browser generated - with the
+ * account namespace carved out of it.
+ */
+export const guestKeyFrom = (raw: unknown): string => {
+  if (typeof raw !== 'string') return '';
+  const id = raw.slice(0, 64);
+  if (!id || id.startsWith(ACCOUNT_PREFIX)) return '';
+  return id;
+};
+
+/** Which profile a session plays on, and what was stored there. */
+export interface Resolution {
+  /** The storage key progression is saved under, or '' for "do not save". */
+  readonly key: string;
+  /** The stored profile, or undefined for a fresh start. */
+  readonly profile: Profile | undefined;
+  /** True when this call just moved a guest's progress onto the account. */
+  readonly migrated: boolean;
+}
+
+/** The earned progression of a live player, as a profile. */
+const snapshot = (player: PlayerState): Profile => ({
+  totalSpeed: player.totalSpeed,
+  wins: player.wins,
+  rebirths: player.rebirths,
+  ownedBoots: player.ownedBoots,
+  ownedTrails: player.ownedTrails,
+  trailSlot: player.trailSlot,
+  ownedAuras: player.ownedAuras,
+  auraSlot: player.auraSlot,
+  // Carried so the leaderboards can name and picture this player while
+  // they are offline. Already cleaned by the room before it reached the
+  // replicated state, so it is stored as-is.
+  legionName: player.legionName,
+  legionPfp: player.legionPfp,
+});
+
 const emptyProfile = (): Profile => ({
   totalSpeed: 0,
   wins: 0,
@@ -31,8 +84,15 @@ const emptyProfile = (): Profile => ({
 });
 
 /**
- * Earned progression, keyed by a stable client id and backed by a durable
- * store.
+ * Earned progression, backed by a durable store.
+ *
+ * TWO KINDS OF KEY, and the difference is the point:
+ *  - a GUEST key is the id this browser generated and keeps in localStorage.
+ *    It follows one browser, not a person, and it is what a player who is
+ *    not signed in plays on;
+ *  - an ACCOUNT key (`bloxity:<id>`) is a Bloxity account id that the SERVER
+ *    verified with Bloxity. It is never taken from the client, and it is the
+ *    same on every browser and device the account signs in from.
  *
  * The in-memory map is a CACHE in front of a `PersistenceAdapter`; the adapter
  * decides where the bytes actually live - Bloxity's managed MongoDB in
@@ -81,7 +141,10 @@ export class ProfileStore {
       for (let attempt = 1; ; attempt += 1) {
         try {
           const stored = await this.adapter.open();
-          for (const [playerId, profile] of stored) this.profiles.set(playerId, { ...profile });
+          // A moved guest profile is the same progress as its account's row.
+          for (const [playerId, profile] of stored) {
+            if (!profile.migratedTo) this.profiles.set(playerId, { ...profile });
+          }
           break;
         } catch (error: unknown) {
           logger.error(
@@ -127,7 +190,111 @@ export class ProfileStore {
   async refresh(playerId: string): Promise<void> {
     if (!playerId || this.live.has(playerId)) return;
     const stored = await this.adapter.get(playerId);
-    if (stored) this.profiles.set(playerId, stored);
+    if (stored && !stored.migratedTo) this.profiles.set(playerId, stored);
+  }
+
+  /**
+   * Decide which profile a session plays on, and read it FRESH.
+   *
+   * THROWS if storage cannot answer. The caller must refuse rather than start
+   * the player from nothing, which the next save would write over their
+   * progress.
+   *
+   * @param guestKey  this browser's guest key, from `guestKeyFrom`, or ''.
+   * @param accountId a Bloxity account id THE SERVER VERIFIED, or null.
+   * @param live      the player's current state when a session already in a
+   *                  room signs in - newer than anything saved, so it is what
+   *                  a first login moves onto the account.
+   */
+  async resolve(guestKey: string, accountId: string | null, live?: PlayerState): Promise<Resolution> {
+    if (!accountId) {
+      if (!guestKey) return { key: '', profile: undefined, migrated: false };
+      const stored = await this.read(guestKey);
+      // A guest profile that moved to an account is NOT restored: its progress
+      // belongs to the account now, and restoring it as well would let one
+      // browser's progress be played - and moved again - twice.
+      const profile = stored && !stored.migratedTo ? stored : undefined;
+      return { key: guestKey, profile, migrated: false };
+    }
+
+    const key = accountKey(accountId);
+    const existing = await this.read(key);
+    // THE ACCOUNT WINS. Whatever this browser holds, an account that already
+    // has progress is never touched by it.
+    if (existing) return { key, profile: existing, migrated: false };
+
+    // The account's first login. Is there browser progress to bring over?
+    const source = await this.migrationSource(guestKey, live);
+    if (!source) return { key, profile: undefined, migrated: false };
+
+    const moved: Profile = { ...source, migratedFrom: guestKey };
+    delete moved.migratedTo;
+    // Create-if-absent is the guarantee: if another session or server created
+    // this account's profile a moment ago, this refuses rather than replacing
+    // it, and the session plays on theirs.
+    if (!(await this.adapter.insertIfAbsent(key, moved))) {
+      const winner = await this.read(key);
+      return { key, profile: winner, migrated: false };
+    }
+    this.profiles.set(key, moved);
+
+    // Only AFTER the account's copy exists is the guest copy marked as moved.
+    // If the process dies between the two, both hold the progress -
+    // duplicated, never lost.
+    const tombstone: Profile = { ...source, migratedTo: key };
+    delete tombstone.migratedFrom;
+    this.adapter.put(guestKey, tombstone);
+    // Off the boards: the account's row is the same progress.
+    this.profiles.delete(guestKey);
+
+    logger.info(
+      SCOPE,
+      `first login: moved guest ${guestKey} -> ${key} ` +
+        `(wins=${moved.wins} speed=${Math.floor(moved.totalSpeed)} rebirths=${moved.rebirths})`,
+    );
+    return { key, profile: moved, migrated: true };
+  }
+
+  /**
+   * Where a Bux purchase made by this Bloxity account is credited.
+   *
+   * The account's profile when it has one. Otherwise the browser profile the
+   * purchase named, which the account's first login then carries over - and
+   * if that browser profile has already moved, wherever it moved to.
+   */
+  async purchaseTarget(accountId: string, guestKey: string): Promise<string> {
+    if (accountId) {
+      const key = accountKey(accountId);
+      if (this.live.has(key) || (await this.adapter.get(key))) return key;
+    }
+    if (!guestKey) return '';
+    const stored = await this.adapter.get(guestKey);
+    return stored?.migratedTo ?? guestKey;
+  }
+
+  /**
+   * One profile, fresh from the store - unless the player is live on THIS
+   * server, whose in-memory state is newer than anything stored.
+   */
+  private async read(key: string): Promise<Profile | undefined> {
+    if (this.live.has(key)) return this.profiles.get(key);
+    const stored = await this.adapter.get(key);
+    if (stored && !stored.migratedTo) this.profiles.set(key, stored);
+    return stored ?? undefined;
+  }
+
+  /** The browser progress a first login would move, or null for none. */
+  private async migrationSource(guestKey: string, live: PlayerState | undefined): Promise<Profile | null> {
+    if (!guestKey) return null;
+    const stored = this.live.has(guestKey)
+      ? this.profiles.get(guestKey)
+      : await this.adapter.get(guestKey);
+    // Already moved to an account once: never a second time.
+    if (stored?.migratedTo) return null;
+    // A session signing in holds its progress in memory, newer than the last
+    // autosave - that is what moves.
+    if (live) return snapshot(live);
+    return stored ?? null;
   }
 
   /** The player left this server; their stored copy is authoritative again. */
@@ -140,17 +307,25 @@ export class ProfileStore {
     try {
       const stored = await this.adapter.open();
       for (const [playerId, profile] of stored) {
-        if (!this.live.has(playerId)) this.profiles.set(playerId, { ...profile });
+        if (this.live.has(playerId)) continue;
+        if (profile.migratedTo) this.profiles.delete(playerId);
+        else this.profiles.set(playerId, { ...profile });
       }
     } catch {
       // The boards simply stay as they were until the next attempt.
     }
   }
 
-  /** Load a profile into a fresh PlayerState, or seed a new one. */
-  restore(playerId: string, player: PlayerState): Profile {
-    const existing = this.profiles.get(playerId);
-    const profile = existing ?? emptyProfile();
+  /**
+   * Load a RESOLVED profile onto a player, or seed a new one.
+   *
+   * `undefined` is a fresh start, written out explicitly - which matters for
+   * a session switching profiles, where "whatever the state held" is the
+   * other profile's progress.
+   */
+  restore(playerId: string, player: PlayerState, existing: Profile | undefined): Profile {
+    const profile: Profile = existing ? { ...existing } : emptyProfile();
+    delete profile.migratedTo;
 
     player.totalSpeed = profile.totalSpeed;
     player.wins = profile.wins;
@@ -175,21 +350,12 @@ export class ProfileStore {
   /** Capture the player's earned progression. Safe to call often. */
   save(playerId: string, player: PlayerState): void {
     if (!playerId) return;
-    const profile: Profile = {
-      totalSpeed: player.totalSpeed,
-      wins: player.wins,
-      rebirths: player.rebirths,
-      ownedBoots: player.ownedBoots,
-      ownedTrails: player.ownedTrails,
-      trailSlot: player.trailSlot,
-      ownedAuras: player.ownedAuras,
-      auraSlot: player.auraSlot,
-      // Carried so the leaderboards can name and picture this player while
-      // they are offline. Already cleaned by the room before it reached the
-      // replicated state, so it is stored as-is.
-      legionName: player.legionName,
-      legionPfp: player.legionPfp,
-    };
+    const profile = snapshot(player);
+    // Where an account's first progress came from stays on it. `migratedTo`
+    // is deliberately NOT carried: a guest profile being saved is being
+    // PLAYED, which makes it somebody's live profile again.
+    const from = this.profiles.get(playerId)?.migratedFrom;
+    if (from) profile.migratedFrom = from;
     this.profiles.set(playerId, profile);
     // The adapter coalesces these; durability is guaranteed by `flush`.
     this.adapter.put(playerId, profile);

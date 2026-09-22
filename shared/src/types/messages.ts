@@ -60,6 +60,18 @@ export interface HazardHitMessage {
  * the replicated player so other clients can name them and offer a friend
  * request. Nothing that decides an outcome reads it.
  */
+/**
+ * Client -> server login (MessageType.Authenticate).
+ *
+ * The Bloxity portal's login token exactly as the SDK holds it, or '' when the
+ * player signed out. Never an account id: the server asks Bloxity who the
+ * token belongs to, and that answer is the only account identity it keys
+ * progression on.
+ */
+export interface AuthenticateMessage {
+  token: string;
+}
+
 export interface UpdateIdentityMessage {
   legionName: string;
   /** Bloxity account id, or empty for a guest. */

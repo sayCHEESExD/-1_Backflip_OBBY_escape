@@ -15,6 +15,7 @@ import {
   type EquipTrailMessage,
   type RebirthMessage,
   type HazardHitMessage,
+  type AuthenticateMessage,
   type UpdateIdentityMessage,
   type UpdateAvatarMessage,
   type MoveMessage,
@@ -26,7 +27,8 @@ import { MovementService } from '../movement/MovementService.js';
 import { BootService } from '../progression/BootService.js';
 import { CosmeticService } from '../progression/CosmeticService.js';
 import { AURA_BINDING, TRAIL_BINDING } from '../progression/cosmeticBindings.js';
-import { profileStore } from '../progression/ProfileStore.js';
+import { bloxityAuth } from '../bloxity/BloxityAuth.js';
+import { guestKeyFrom, profileStore, type Profile, type Resolution } from '../progression/ProfileStore.js';
 import { creditWins } from '@obby/shared';
 import { LeaderboardService, type RankedSource } from '../progression/LeaderboardService.js';
 import { ProgressionService } from '../progression/ProgressionService.js';
@@ -42,6 +44,24 @@ const SCOPE = 'GorgeRoom';
 
 /** How long a join waits for storage to come up before it is refused. */
 const JOIN_STORAGE_WAIT_MS = 8_000;
+
+/**
+ * When Bloxity could not be ASKED about a login (timeout, 5xx), the player
+ * plays on their browser's guest profile meanwhile and the login is checked
+ * again after each of these delays - a signed-in player is never demoted for
+ * good because the portal hiccuped.
+ */
+const REVERIFY_DELAYS_MS = [10_000, 30_000, 90_000] as const;
+
+/** What `onAuth` decides about a joining player, handed to `onJoin`. */
+interface SessionAuth {
+  readonly resolution: Resolution;
+  readonly guestKey: string;
+  /** The Bloxity account Bloxity itself vouched for, or null. */
+  readonly accountId: string | null;
+  /** A token Bloxity could not be asked about, to try again after joining. */
+  readonly retryToken: string;
+}
 
 /**
  * Maximum concurrent players in one gorge instance.
@@ -147,8 +167,23 @@ export class GorgeRoom extends Room<GorgeState> {
   private readonly leaderboards = new LeaderboardService();
   /** Shared across rooms - a room dies with its last client, profiles must not. */
   private readonly profiles = profileStore;
-  /** Stable client id per session, used to restore progression on reconnect. */
+  /**
+   * The storage key each session's progression is saved under: the VERIFIED
+   * Bloxity account's key when signed in, the browser's guest key otherwise.
+   * Never the Colyseus session id.
+   */
   private readonly playerIds = new Map<string, string>();
+  /** This browser's guest key per session, kept for sign-in and sign-out. */
+  private readonly guestKeys = new Map<string, string>();
+  /** The account Bloxity VERIFIED per session. Only ever written from its answer. */
+  private readonly accountIds = new Map<string, string>();
+  /**
+   * Sessions whose profile is being switched right now. Their saves are held
+   * off, so an autosave cannot write the old profile back mid-move.
+   */
+  private readonly switching = new Set<string>();
+  /** The newest login a busy session has asked for, applied once it is free. */
+  private readonly queuedTokens = new Map<string, string>();
   /** Seconds since the last background save of every connected player. */
   private autosaveTimer = 0;
   /** Seconds since the boards were last rebuilt. */
@@ -191,6 +226,17 @@ export class GorgeRoom extends Room<GorgeState> {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
       player.legionAvatar = cleanAvatarLook(message?.legionAvatar);
+    });
+
+    // The player's LOGIN changed. The token is verified with Bloxity; only the
+    // account Bloxity names can move this session onto an account profile.
+    this.onMessage(MessageType.Authenticate, (client, message: AuthenticateMessage) => {
+      const token = typeof message?.token === 'string' ? message.token : '';
+      if (this.switching.has(client.sessionId)) {
+        this.queuedTokens.set(client.sessionId, token);
+        return;
+      }
+      void this.authenticate(client, token);
     });
 
     this.onMessage(MessageType.HazardHit, (client, message: HazardHitMessage) => {
@@ -238,29 +284,48 @@ export class GorgeRoom extends Room<GorgeState> {
   }
 
   /**
-   * Admit a player only once their saved progress can be read.
+   * Decide WHO this is, and admit them only once their progress can be read.
    *
-   * Their stored profile is re-read here, fresh, before they join: with
-   * several server instances the copy this one cached may be older than what
-   * another instance saved. If storage is not ready or cannot be read the
-   * join is REFUSED with a retryable error - the client retries on its own -
-   * because admitting them on an empty or stale profile would start them from
-   * zero and the next save would write that over their real progress.
+   * A Bloxity login token is verified with Bloxity; the account it names is
+   * the only account identity this session will have, and its profile is
+   * what they play on - the same on every device. No token, or one Bloxity
+   * rejects, plays on this browser's guest profile as before.
+   *
+   * The profile is read FRESH: with several server instances the copy this
+   * one cached may be older than another instance's save. If storage is not
+   * ready or cannot be read the join is REFUSED with a retryable error,
+   * because admitting them on an empty profile would save it over their real
+   * progress.
    */
-  override async onAuth(_client: Client, options?: { playerId?: string }): Promise<boolean> {
+  override async onAuth(
+    _client: Client,
+    options?: { playerId?: string; bloxityToken?: string },
+  ): Promise<SessionAuth> {
     if (!(await this.profiles.whenReady(JOIN_STORAGE_WAIT_MS))) {
       throw new ServerError(503, 'Saved progress is still loading - please try again');
     }
-    const playerId = typeof options?.playerId === 'string' ? options.playerId : '';
-    if (playerId) {
-      try {
-        await this.profiles.refresh(playerId);
-      } catch (error: unknown) {
-        logger.error(SCOPE, `could not read profile playerId=${playerId}`, error);
-        throw new ServerError(503, 'Could not load your saved progress - please try again');
-      }
+    const guestKey = guestKeyFrom(options?.playerId);
+    const token = typeof options?.bloxityToken === 'string' ? options.bloxityToken : '';
+    const verdict = token ? await bloxityAuth.verify(token) : null;
+    const accountId = verdict?.kind === 'verified' ? verdict.accountId : null;
+
+    let resolution: Resolution;
+    try {
+      resolution = await this.profiles.resolve(guestKey, accountId);
+    } catch (error: unknown) {
+      logger.error(
+        SCOPE,
+        `could not read profile guest=${guestKey || '-'} account=${accountId ?? '-'}`,
+        error,
+      );
+      throw new ServerError(503, 'Could not load your saved progress - please try again');
     }
-    return true;
+    return {
+      resolution,
+      guestKey,
+      accountId,
+      retryToken: verdict?.kind === 'unavailable' ? token : '',
+    };
   }
 
   override onJoin(
@@ -272,6 +337,7 @@ export class GorgeRoom extends Room<GorgeState> {
       legionPfp?: string;
       legionAvatar?: string;
     },
+    auth?: SessionAuth,
   ): void {
     const player = new PlayerState();
     player.sessionId = client.sessionId;
@@ -291,26 +357,12 @@ export class GorgeRoom extends Room<GorgeState> {
     player.legionPfp = cleanLegionPfp(options?.legionPfp);
     player.legionAvatar = cleanAvatarLook(options?.legionAvatar);
 
-    // Restore earned progression for a returning client, then let the derived
-    // fields (cap, backflips, movement speed) follow from it.
-    const playerId = typeof options?.playerId === 'string' ? options.playerId : '';
-    logger.info(SCOPE, `join options playerId=${playerId || '(none)'}`);
-    if (playerId) {
-      this.playerIds.set(client.sessionId, playerId);
-      this.profiles.restore(playerId, player);
-      this.boots.equipBest(player);
-      // A restored profile could name an item it does not own if the save were
-      // hand-edited; the multipliers already ignore that, this keeps the
-      // replicated state honest too.
-      this.trails.sanitise(player);
-      this.auras.sanitise(player);
-    }
-    this.rebirths.sync(player);
-    // LAST of the progression services, because it is the one that resolves
-    // movement speed - and it can only do that once the restored rebirth
-    // count, boots and cosmetics are all in place.
-    this.speed.applyRestoredProgress(player);
-    this.treadmills.syncGate(player);
+    // Restore earned progression - from the profile `onAuth` resolved - then
+    // let the derived fields (cap, backflips, movement speed) follow from it.
+    const resolution = auth?.resolution;
+    if (auth?.guestKey) this.guestKeys.set(client.sessionId, auth.guestKey);
+    if (auth?.accountId) this.accountIds.set(client.sessionId, auth.accountId);
+    this.loadProgress(client.sessionId, player, resolution?.key ?? '', resolution?.profile);
     // Movement is initialised last: it seeds the flip allowance from the
     // capacity the progression services just resolved.
     this.movement.initialise(player);
@@ -320,8 +372,141 @@ export class GorgeRoom extends Room<GorgeState> {
     logger.info(
       SCOPE,
       `join sessionId=${client.sessionId} players=${this.state.players.size} ` +
+        `as ${auth?.accountId ? 'account' : 'guest'} ` +
+        `(${resolution?.migrated ? 'migrated' : resolution?.profile ? 'restored' : 'new'}) ` +
         `level=${player.level} rebirths=${player.rebirths} wins=${player.wins}`,
     );
+
+    // Bloxity did not answer about this login: play as a guest for now, and
+    // ask again shortly rather than leaving a signed-in player a guest.
+    if (auth?.retryToken) this.scheduleReverify(client, auth.retryToken, 0);
+  }
+
+  /**
+   * Put a profile's earned progression onto a player and re-derive everything
+   * that follows from it. Shared by a join and a mid-session sign-in, so the
+   * two cannot restore differently.
+   */
+  private loadProgress(
+    sessionId: string,
+    player: PlayerState,
+    key: string,
+    profile: Profile | undefined,
+  ): void {
+    if (key) {
+      this.playerIds.set(sessionId, key);
+      this.profiles.restore(key, player, profile);
+      this.boots.equipBest(player);
+      // A restored profile could name an item it does not own if the save were
+      // hand-edited; the multipliers already ignore that, this keeps the
+      // replicated state honest too.
+      this.trails.sanitise(player);
+      this.auras.sanitise(player);
+    } else {
+      this.playerIds.delete(sessionId);
+    }
+    this.rebirths.sync(player);
+    // LAST of the progression services, because it is the one that resolves
+    // movement speed - and it can only do that once the restored rebirth
+    // count, boots and cosmetics are all in place.
+    this.speed.applyRestoredProgress(player);
+    this.treadmills.syncGate(player);
+  }
+
+  /**
+   * Move a live session onto the profile its login entitles it to.
+   *
+   * Signing IN: verified with Bloxity, then the account's profile is loaded -
+   * or, on the account's first login, this session's guest progress becomes
+   * the account's. Signing OUT, or a login Bloxity rejects: back to this
+   * browser's guest profile. The profile being LEFT is saved first.
+   */
+  private async authenticate(client: Client, token: string, attempt = 0): Promise<void> {
+    const sessionId = client.sessionId;
+    const guestKey = this.guestKeys.get(sessionId) ?? '';
+    this.switching.add(sessionId);
+    try {
+      let accountId: string | null = null;
+      if (token) {
+        const verdict = await bloxityAuth.verify(token);
+        if (verdict.kind === 'verified') accountId = verdict.accountId;
+        else if (verdict.kind === 'unavailable') {
+          // Keep what they have and ask again later. Not a sign-out.
+          this.scheduleReverify(client, token, attempt);
+          return;
+        }
+      }
+
+      const player = this.state.players.get(sessionId);
+      if (!player) return;
+      const currentAccount = this.accountIds.get(sessionId) ?? null;
+      if (accountId === currentAccount) return; // nothing changed
+      const currentKey = this.playerIds.get(sessionId) ?? '';
+
+      // A guest's live state is the freshest copy of their progress, and it is
+      // what a first login moves onto the account.
+      const leavingGuest = !currentAccount && currentKey === guestKey;
+      const resolution = await this.profiles.resolve(
+        guestKey,
+        accountId,
+        leavingGuest && accountId ? player : undefined,
+      );
+      if (!this.state.players.has(sessionId)) return;
+
+      // Save the profile being LEFT - unless it was just moved, in which case
+      // the store already wrote it and marked it.
+      if (currentKey && !resolution.migrated) this.profiles.save(currentKey, player);
+      if (currentKey) this.profiles.release(currentKey);
+
+      if (accountId) this.accountIds.set(sessionId, accountId);
+      else this.accountIds.delete(sessionId);
+
+      // The same order as a join: reset, restore, re-derive - then back to
+      // spawn, because the run in progress belonged to the other profile.
+      this.progression.initialise(player);
+      this.trophies.initialise(player);
+      this.speed.initialise(player);
+      this.boots.initialise(player);
+      this.treadmills.initialise(player);
+      this.trails.initialise(player);
+      this.auras.initialise(player);
+      this.loadProgress(sessionId, player, resolution.key, resolution.profile);
+      this.respawn(sessionId, player, 'manual');
+      this.switching.delete(sessionId);
+      // Written at once, so a crash straight after a sign-in cannot lose it.
+      this.persist(sessionId, player);
+      logger.info(
+        SCOPE,
+        `${sessionId} is now ${accountId ? 'signed in' : 'a guest'} ` +
+          `(${resolution.migrated ? 'migrated' : resolution.profile ? 'restored' : 'new'}) ` +
+          `level=${player.level} rebirths=${player.rebirths} wins=${player.wins}`,
+      );
+    } catch (error: unknown) {
+      // Storage failed mid-switch: stay exactly where they were, lose nothing.
+      logger.error(SCOPE, `${sessionId}: could not switch profile; staying put`, error);
+    } finally {
+      this.switching.delete(sessionId);
+      const next = this.queuedTokens.get(sessionId);
+      if (next !== undefined && this.state.players.has(sessionId)) {
+        this.queuedTokens.delete(sessionId);
+        void this.authenticate(client, next);
+      }
+    }
+  }
+
+  /** Ask Bloxity about a login again, a little later. */
+  private scheduleReverify(client: Client, token: string, attempt: number): void {
+    const delay = REVERIFY_DELAYS_MS[attempt];
+    if (delay === undefined) {
+      logger.warn(SCOPE, `${client.sessionId}: Bloxity never answered; staying a guest`);
+      return;
+    }
+    this.clock.setTimeout(() => {
+      if (!this.state.players.has(client.sessionId)) return;
+      // A newer login is being applied: that one wins.
+      if (this.switching.has(client.sessionId)) return;
+      void this.authenticate(client, token, attempt + 1);
+    }, delay);
   }
 
   override onLeave(client: Client, consented: boolean): void {
@@ -332,6 +517,10 @@ export class GorgeRoom extends Room<GorgeState> {
       this.profiles.release(playerId);
     }
     this.playerIds.delete(client.sessionId);
+    this.guestKeys.delete(client.sessionId);
+    this.accountIds.delete(client.sessionId);
+    this.switching.delete(client.sessionId);
+    this.queuedTokens.delete(client.sessionId);
 
     this.state.players.delete(client.sessionId);
     this.movement.forget(client.sessionId);
@@ -627,6 +816,8 @@ export class GorgeRoom extends Room<GorgeState> {
 
   /** Capture earned progression so a reconnect restores it. */
   private persist(sessionId: string, player: PlayerState): void {
+    // Mid-switch, the live state is about to belong to another profile.
+    if (this.switching.has(sessionId)) return;
     const playerId = this.playerIds.get(sessionId);
     if (playerId) this.profiles.save(playerId, player);
   }

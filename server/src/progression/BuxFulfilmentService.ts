@@ -1,6 +1,6 @@
 import { buxProductForSku, creditWins } from '@obby/shared';
 import { logger } from '../util/logger.js';
-import type { ProfileStore } from './ProfileStore.js';
+import { guestKeyFrom, type ProfileStore } from './ProfileStore.js';
 
 const SCOPE = 'BuxFulfilment';
 
@@ -31,6 +31,9 @@ export type FulfilmentOutcome =
  * costs nothing to hold.
  */
 const SEEN_LIMIT = 4096;
+
+/** The shape of a Bloxity account id - the same rule login verification uses. */
+const ACCOUNT_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
 /**
  * The ONE place a Bux purchase turns into game currency.
@@ -80,17 +83,24 @@ export class BuxFulfilmentService {
     const product = buxProductForSku(sku);
     if (!product) return { status: 'rejected', reason: `unknown sku "${sku}"` };
 
-    // The game's own profile key, sent as purchase metadata by the client.
-    // Without it there is nobody to credit - and guessing from the Bloxity
-    // user id would credit a profile that may not be the one playing.
-    const metadata = isRecord(payload.metadata) ? payload.metadata : {};
-    const playerId = asString(metadata['playerId']);
-    if (!playerId) return { status: 'rejected', reason: 'missing metadata.playerId' };
-
     if (this.seen.has(transactionId)) {
       logger.info(SCOPE, `duplicate webhook tx=${transactionId} - already granted`);
-      return { status: 'duplicate', playerId };
+      return { status: 'duplicate', playerId: '' };
     }
+
+    // WHOSE profile. A signed-in player plays on their Bloxity ACCOUNT's
+    // profile, so the buyer's account id - Bloxity's own, from this
+    // server-to-server call - is tried first. The browser profile named in the
+    // purchase metadata is the fallback for an account that has never played
+    // signed in; its first login carries the credit onto the account.
+    const metadata = isRecord(payload.metadata) ? payload.metadata : {};
+    const userId = asString(payload.userId);
+    const accountId = ACCOUNT_ID.test(userId) ? userId : '';
+    const playerId = await this.profiles.purchaseTarget(
+      accountId,
+      guestKeyFrom(metadata['playerId']),
+    );
+    if (!playerId) return { status: 'rejected', reason: 'no account or metadata.playerId' };
 
     const balance = await this.profiles.creditWins(playerId, product.wins);
     this.remember(transactionId);

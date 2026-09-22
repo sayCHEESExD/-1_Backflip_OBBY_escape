@@ -34,6 +34,15 @@ export interface StoredProfile {
    */
   legionName: string;
   legionPfp: string;
+  /**
+   * On a GUEST profile whose progress was moved onto a Bloxity account at
+   * that account's first verified login: the account key it went to. A
+   * profile carrying this is a tombstone - never restored, ranked or moved
+   * again - so one browser's progress cannot be played or migrated twice.
+   */
+  migratedTo?: string;
+  /** On an ACCOUNT profile created by that move: the guest key it came from. */
+  migratedFrom?: string;
 }
 
 export interface PersistenceAdapter {
@@ -61,6 +70,16 @@ export interface PersistenceAdapter {
    * rely on `flush` for durability at shutdown.
    */
   put(playerId: string, profile: StoredProfile): void;
+
+  /**
+   * Store a profile ONLY if none exists under this key yet.
+   *
+   * The guarantee a first-login migration rests on: if another session or
+   * server created the account's profile a moment ago, this refuses rather
+   * than replacing it. Resolves true when this call created it. REJECTS when
+   * the store is unreachable.
+   */
+  insertIfAbsent(playerId: string, profile: StoredProfile): Promise<boolean>;
 
   /** Write everything pending. Resolves once it is durable (or gives up). */
   flush(): Promise<void>;
@@ -96,4 +115,10 @@ export const sanitiseProfile = (raw: Partial<Record<keyof StoredProfile, unknown
   auraSlot: Math.max(0, Math.floor(finite(raw?.auraSlot, 0))),
   legionName: typeof raw?.legionName === 'string' ? raw.legionName.slice(0, 32) : '',
   legionPfp: typeof raw?.legionPfp === 'string' ? raw.legionPfp.slice(0, 600) : '',
+  ...(typeof raw?.migratedTo === 'string' && raw.migratedTo
+    ? { migratedTo: raw.migratedTo.slice(0, 200) }
+    : {}),
+  ...(typeof raw?.migratedFrom === 'string' && raw.migratedFrom
+    ? { migratedFrom: raw.migratedFrom.slice(0, 200) }
+    : {}),
 });

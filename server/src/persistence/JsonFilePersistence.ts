@@ -114,6 +114,16 @@ export class JsonFilePersistence implements PersistenceAdapter {
     this.timer.unref?.();
   }
 
+  insertIfAbsent(playerId: string, profile: StoredProfile): Promise<boolean> {
+    if (!playerId || this.cache.has(playerId)) return Promise.resolve(false);
+    this.cache.set(playerId, { ...profile });
+    this.dirty = true;
+    // A migration is the one write whose loss would be noticed: made durable
+    // now rather than after the debounce.
+    this.flushSync();
+    return Promise.resolve(true);
+  }
+
   flush(): Promise<void> {
     this.flushSync();
     return Promise.resolve();

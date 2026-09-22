@@ -324,6 +324,7 @@ export class Game {
         // carries. Remote plates follow the replicated name instead.
         this.localPlayer?.character.setDisplayName(name);
       },
+      updateLogin: () => this.network.sendAuthenticate(),
       getRoomPlayers: () =>
         this.network.roomIdentities.filter((player) => player.sessionId !== this.localSessionId),
     };
@@ -356,6 +357,10 @@ export class Game {
     // Sent with the join, so everyone sees this player's Bloxity look from
     // their very first frame rather than the bundled default.
     this.network.setAvatarLook(encodeAvatarLook(this.bloxityBridge.avatarLook));
+    // WHOSE progress this is: the login token, which the server verifies with
+    // Bloxity so a signed-in player gets their account's profile on every
+    // device. Read at join time and again on every login change.
+    this.network.setTokenProvider(() => this.bloxityBridge.loginToken);
     await this.network.connect();
   }
 

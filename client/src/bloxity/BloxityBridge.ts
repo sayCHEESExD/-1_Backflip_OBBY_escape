@@ -45,6 +45,12 @@ export interface BloxityHost {
   setPortalPointerLock(locked: boolean): void;
   /** Tell the room who this player is now, e.g. after a login. Cosmetic only. */
   updateIdentity(name: string, userId: string, pfp: string): void;
+  /**
+   * The LOGIN may have changed: have the room re-check `loginToken`, so the
+   * session moves onto the signed-in account's profile (or back to the
+   * browser's own on sign-out).
+   */
+  updateLogin(): void;
   /** Tell the room how this player is dressed now (`encodeAvatarLook`). Cosmetic only. */
   setAvatarLook(look: string): void;
   /** Everyone else in the room right now. */
@@ -143,6 +149,17 @@ export class BloxityBridge {
   }
 
   /**
+   * The portal's login token, or '' for a guest - read through, never cached.
+   *
+   * What the SERVER verifies with Bloxity to decide whose progress this is.
+   * `playerUserId` above is only a label: an id the browser reports is an id
+   * the browser chose, so progression is never keyed on it.
+   */
+  get loginToken(): string {
+    return bloxity.getToken() ?? '';
+  }
+
+  /**
    * The player's Bloxity avatar URL, signed in or not.
    *
    * Guests have a portal-generated picture as well as a name, so this is
@@ -207,6 +224,10 @@ export class BloxityBridge {
         // one login more than once (restored, then refreshed from its API),
         // and the one that finally carries the display name has the same id.
         this.host.updateIdentity(this.playerName, this.playerUserId, this.playerPfp);
+        // AND whose progress this is. The server verifies the token with
+        // Bloxity and moves the session onto the account's profile. Deduped by
+        // the network layer, so a repeated announcement sends nothing.
+        this.host.updateLogin();
 
         const userId = user?._id ?? null;
         const changed = this.lastUserId !== undefined && userId !== this.lastUserId;

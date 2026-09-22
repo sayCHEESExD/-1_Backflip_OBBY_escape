@@ -510,6 +510,17 @@ api.bloxity.io) - there is one code path, never a branch on environment.
   `onUserChanged` reports a real change, because a guest who logs in after
   joining would otherwise stay known to everyone by their guest name, with no
   account to befriend.
+- **Progress is keyed by the VERIFIED Bloxity account** (same pattern as
+  +1 Speed Spaceship Escape). The client sends the SDK's login TOKEN (join
+  option `bloxityToken`, and `Authenticate` on every login change) - never an
+  account id. `bloxity/BloxityAuth.ts` asks Bloxity
+  (`POST /v1/auth/game-token/verify`, fails closed) and a signed-in player
+  plays on `bloxity:<account id>` on every device. Guests keep the browser
+  key; `guestKeyFrom` refuses the `bloxity:` namespace so it cannot be forged.
+  An account's FIRST verified login moves that browser's guest progress onto
+  it via create-if-absent, then marks the guest copy `migratedTo`; an account
+  that already has a profile is never overwritten by a browser's. The
+  cosmetic `legionUserId` is never a storage key.
 - **Identity is re-sent whenever it differs from what the ROOM has**, never
   gated on the account id changing: the SDK announces one login more than once
   (restored, then refreshed from its API) and a login can land after the join,

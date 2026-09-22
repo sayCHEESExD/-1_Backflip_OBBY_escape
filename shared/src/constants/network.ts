@@ -60,6 +60,13 @@ export const MessageType = {
    * the identity - see `shared/config/avatarLook.ts`.
    */
   UpdateAvatar: 'updateAvatar',
+  /**
+   * Client -> server: the player's Bloxity LOGIN changed - signed in, signed
+   * out or a different account. Carries the portal's login token, never an
+   * account id; the server verifies it with Bloxity and moves the session
+   * onto the profile that account owns.
+   */
+  Authenticate: 'authenticate',
   /** Client -> server: request to buy the boot the player is standing on. */
   BuyBoot: 'buyBoot',
   /** Client -> server: request a rebirth. */
