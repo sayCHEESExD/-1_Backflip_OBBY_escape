@@ -2,7 +2,9 @@ import { formatSpeed } from '@obby/shared';
 import { iconElement } from '../config/uiIcons.js';
 
 /**
- * Trophy wins total, pinned top-left.
+ * Trophy wins total, at the TOP of the left column: directly above the rail
+ * of tiles, on the same left edge, and centred with it as one unit (see
+ * `uiScale.ts` - the column's extent includes this counter).
  *
  * Shows the SERVER-AUTHORITATIVE wins count. It never adds anything itself -
  * `TrophyService` is the only place wins are granted.
@@ -57,11 +59,19 @@ const injectStyles = (): void => {
   const style = document.createElement('style');
   style.textContent = `
 .obby-wins {
+  /* Column top 14 (design px): 48 tall, 8 above the Rebirth tile at 70, on
+     the tiles' left edge and at least one tile wide. */
+  --obby-rail-top: 14px;
   position: fixed;
-  left: calc(var(--obby-safe-l, 0px) + 14px * var(--obby-ui-scale, 1));
-  top: calc(var(--obby-safe-t, 0px) + 14px * var(--obby-ui-scale, 1));
+  left: calc(var(--obby-safe-l, 0px) + 12px * var(--obby-ui-scale, 1));
+  top: calc(50% + (var(--obby-rail-top) - var(--obby-rail-center, 234px)) * var(--obby-ui-scale, 1));
+  box-sizing: border-box;
+  height: calc(48px * var(--obby-ui-scale, 1));
+  min-width: calc(68px * var(--obby-ui-scale, 1));
   display: flex;
   align-items: center;
+  justify-content: center;
+  transform-origin: left center;
   gap: calc(8px * var(--obby-ui-scale, 1));
   padding: calc(6px * var(--obby-ui-scale, 1)) calc(16px * var(--obby-ui-scale, 1)) calc(6px * var(--obby-ui-scale, 1)) calc(10px * var(--obby-ui-scale, 1));
   border-radius: calc(10px * var(--obby-ui-scale, 1));
@@ -74,12 +84,12 @@ const injectStyles = (): void => {
   z-index: 20;
 }
 .obby-wins__icon {
-  font-size: calc(clamp(20px, 3vw, 28px) * var(--obby-ui-scale, 1));
+  font-size: calc(26px * var(--obby-ui-scale, 1));
   line-height: 1;
   filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.5));
 }
 .obby-wins__amount {
-  font-size: calc(clamp(17px, 2.7vw, 25px) * var(--obby-ui-scale, 1));
+  font-size: calc(23px * var(--obby-ui-scale, 1));
   font-weight: 800;
   color: #ffffff;
   text-shadow: 0 2px 0 #16202e, 0 -1px 0 #16202e, 1px 0 0 #16202e, -1px 0 0 #16202e;

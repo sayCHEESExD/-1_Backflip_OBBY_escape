@@ -14,10 +14,10 @@
  *      landscape phone both shrink it, and a big monitor grows it;
  *   2. clamped between a floor that keeps tiles usable touch targets and text
  *      readable, and a ceiling so a 4K window does not get billboard buttons;
- *   3. capped so the left rail, centred vertically, always fits between the
- *      Wins counter and the bottom edge. This last limit wins over the floor:
- *      on a very short window everything getting smaller beats anything
- *      going off-screen.
+ *   3. capped so the left column - the Wins counter and the rail of tiles
+ *      below it, centred vertically as one unit - always fits the height.
+ *      This last limit wins over the floor: on a very short window
+ *      everything getting smaller beats anything going off-screen.
  */
 
 /** The screen the HUD was designed on, and the scale it was designed at. */
@@ -31,23 +31,21 @@ const MIN_SCALE = 0.66;
 const MAX_SCALE = 1.6;
 
 /**
- * The left rail's extent in design px: the Rebirth tile's top (70) to the
- * bottom of the Bloxity tile (386 + 68). Components place their tiles at
+ * The left column's extent in design px: the Wins counter's top (14 - it is
+ * 48 tall and sits 8 above the Rebirth tile at 70) to the bottom of the
+ * Bloxity tile (386 + 68). Components place themselves at
  * `50% + (top - RAIL_CENTER) * scale`, so the column stays centred as a unit.
  */
-const RAIL_START = 70;
+const RAIL_START = 14;
 const RAIL_END = 454;
 export const RAIL_CENTER = (RAIL_START + RAIL_END) / 2;
 const RAIL_HALF = (RAIL_END - RAIL_START) / 2;
 
-/**
- * Design px the Wins counter needs above the rail: its top offset (14), its
- * height (~52) and a gap (8). The rail's top may not rise into that.
- */
-const WINS_CLEARANCE = 74;
+/** Design px kept clear above and below the column. */
+const EDGE_MARGIN = 10;
 
-/** Rail + Wins counter fit when `scale <= height / FIT_DIVISOR`. */
-const FIT_DIVISOR = 2 * (RAIL_HALF + WINS_CLEARANCE);
+/** The column fits when `scale <= height / FIT_DIVISOR`. */
+const FIT_DIVISOR = 2 * (RAIL_HALF + EDGE_MARGIN);
 
 let installed = false;
 
