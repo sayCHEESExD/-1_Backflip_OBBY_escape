@@ -298,12 +298,12 @@ Procedural, bone-driven, and required for the finished game — not a placeholde
   second deduction path is how a wallet ends up disagreeing with an inventory.
   Wins are ADDED in exactly two places, and nowhere else may add them:
   `TrophyService` for earned rewards, and `BuxFulfilmentService` for a paid
-  Bloxity purchase. The second exists because real money is a real source of
-  currency, and it is a whole service rather than a few lines in an HTTP
-  handler for the same reason `Wallet.spend` is a service - so the catalog
-  lookup, the duplicate check and the uint32 overflow guard all live together
-  and cannot be skipped by a new caller. Wins are only ever removed by
-  `Wallet.spend`.
+  Bloxity purchase (recorded there, handed over by `GorgeRoom.applyGrants`
+  with the uint32 guard). The second exists because real money is a real
+  source of currency, and it is a whole service rather than a few lines in an
+  HTTP handler for the same reason `Wallet.spend` is a service - so the catalog
+  lookup and the duplicate check live together and cannot be skipped by a new
+  caller. Wins are only ever removed by `Wallet.spend`.
 - Trails and auras share one `CosmeticService`, parameterised by a binding, so
   the buy-and-equip transaction exists once. What each multiplier DOES is never
   decided in that service.
@@ -346,20 +346,30 @@ Procedural, bone-driven, and required for the finished game — not a placeholde
   `>=20.11` engines range). The container disk is replaced on every deploy and
   scale-to-zero - a JSON file there is how progress vanished after updates.
   The JSON adapter is for local development only.
-- **A profile that decides progress is read FRESH, never from the boot
-  cache**: `GorgeRoom.onAuth` awaits `profileStore.refresh(playerId)` before
-  admitting a player, because up to five server instances share the database
-  and a cached copy can be older than another instance's save. If storage is
-  not ready or the read fails the join is REFUSED (503, the client retries) -
-  admitting someone on an empty profile would save that zero over their
-  progress. The boot load only seeds the scoreboards, and is re-read every
-  minute for players not on this instance.
-- Saves are queued per player and written as idempotent whole-profile upserts,
-  retried with backoff; an outage delays them, never drops them. A Bux credit
-  re-reads the profile first and answers 200 only once the credit is durable -
-  a storage failure is a 5xx so Bloxity retries instead of refunding.
+- **The storage contract is PER KEY** (`PersistenceAdapter`: get / put /
+  insertIfAbsent / loadAll / whenWritten / flush), one document per player.
+  Several pods share one database, so nothing may write back a whole-map
+  snapshot.
+- **A profile that decides progress is read FRESH at join/sign-in**
+  (`profileStore.resolve` in `GorgeRoom.onAuth`), never from the boot cache -
+  that cache only feeds the boards, refreshed every minute, newer `updatedAt`
+  wins. A failed read is NOT "no profile": `get` THROWS and the join is REFUSED
+  (503, the client retries). Admitting someone on an empty profile would
+  autosave that zero over their progress.
+- Saves queue the latest snapshot per key, written as idempotent
+  `updateOne($set, upsert)` and retried with backoff - an outage delays them,
+  never drops them. Only `migratedTo`/`migratedFrom` are ever `$unset`; every
+  field this build does not know about is preserved (`profileCodec` carries
+  unknown fields through, `profileFields` merges).
+- A `profiles.json` in `OBBY_DATA_DIR` is imported into Mongo on boot with
+  `$setOnInsert` - insert-only, safe every boot. The JSON store keeps atomic
+  temp+fsync+rename writes, recovers a leftover `.tmp`, and MOVES an
+  unparseable file aside rather than overwriting it.
+- Boot never fails on storage: `/health` keeps answering (or Legion restart-
+  loops the pod) and `profileStore.open` retries in the background.
 - Shutdown: Colyseus's own shutdown handler is disabled (it exits before
-  saves land); ours runs `gracefullyShutdown(false)`, then awaits the flush.
+  saves land); ours runs `gracefullyShutdown(false)`, then awaits the flush,
+  lets grant confirmations land, then closes.
 - Rebirth state is server-authoritative: `RebirthService` alone decides
   eligibility and performs the reset.
 - Speed is granted in exactly one place: `SpeedService` on the server. It is
@@ -482,10 +492,17 @@ api.bloxity.io) - there is one code path, never a branch on environment.
   REFUNDS the player, so only a grant that would be wrong answers with an
   error - and a duplicate delivery answers 200, because the first one already
   paid out.
-- A purchase can land while the buyer is offline, so it credits the stored
-  profile; if they are online, `GorgeRoom` mirrors the same credit onto their
-  live state, because the next autosave would otherwise write the old figure
-  back over it. Both halves or neither.
+- **Purchases are a durable QUEUE, addressed to the Bloxity account that
+  paid** (the webhook's `userId`) - never to anything the browser supplies.
+  `BuxGrants` records each one in the same store as the profiles, keyed by
+  transaction id (so it pays once across pods and restarts), and the webhook
+  answers 2xx only once that record is durable. A room hands grants over when
+  that account is VERIFIED there - on join, on sign-in, and on a 3s poll -
+  claiming them atomically (pending -> claimed -> applied), saving the Wins
+  together with the ids in `buxApplied`, and marking them applied only once
+  that save lands. A sweep settles claims left by a dead pod by reading
+  `buxApplied`. Crediting the stored profile directly was wrong: a live
+  player's next autosave wrote it back.
 - **`pointer_lock_changed` is the portal handing off the pointer, not a
   report.** The SDK emits it ONLY from the portal's `legion_pointer_lock`
   message - false when the portal takes the pointer for its pause menu, true
@@ -512,15 +529,43 @@ api.bloxity.io) - there is one code path, never a branch on environment.
   account to befriend.
 - **Progress is keyed by the VERIFIED Bloxity account** (same pattern as
   +1 Speed Spaceship Escape). The client sends the SDK's login TOKEN (join
-  option `bloxityToken`, and `Authenticate` on every login change) - never an
-  account id. `bloxity/BloxityAuth.ts` asks Bloxity
-  (`POST /v1/auth/game-token/verify`, fails closed) and a signed-in player
-  plays on `bloxity:<account id>` on every device. Guests keep the browser
-  key; `guestKeyFrom` refuses the `bloxity:` namespace so it cannot be forged.
-  An account's FIRST verified login moves that browser's guest progress onto
-  it via create-if-absent, then marks the guest copy `migratedTo`; an account
-  that already has a profile is never overwritten by a browser's. The
-  cosmetic `legionUserId` is never a storage key.
+  option `bloxityToken`, and `Authenticate` on every login change, deduped) -
+  never an account id. `bloxity/BloxityAuth.ts` asks Bloxity
+  (`POST https://api.bloxity.io/v1/auth/game-token/verify`, Bearer token, body
+  `{ gameSlug }`; the host is a constant) and a signed-in player plays on
+  `bloxity:<account id>` on every device. Fail closed: only a 2xx carrying a
+  string `_id` is verified. THREE outcomes - verified / rejected (guest) /
+  unavailable (guest for now, re-verified on a backoff, never cached).
+  Verified answers are cached briefly (capped at the token's exp), rejected
+  ones for 30s, keyed by a hash of the token. Never verify the JWT locally:
+  `JWT_SECRET` is the game's own secret, not Bloxity's key.
+- **The slug is `anime-backflip-escape`** (`shared/src/config/bloxity.ts`,
+  the bloxity.io/g/<slug> page), used by BOTH the client's `init` and the
+  server's verification. A token is a capability for one game: verifying
+  against any other slug rejects every signed-in player, which is exactly how
+  progress stayed per-browser while it said `1-backflip-obby-escape`. It is
+  NOT the hosting id `speed-backflip-escape` (Legion's `BLOXITY_GAME_ID`).
+- Guests keep the browser key; `guestKeyFrom` refuses the `bloxity:`
+  namespace so it cannot be forged. An account that has a profile ALWAYS wins
+  and is never touched by browser data. On an account's FIRST verified login a
+  guest profile with real progress (the LIVE state when signing in
+  mid-session) is written with `insertIfAbsent` + `migratedFrom`; only after
+  that succeeds is the guest copy marked `migratedTo` (kept as a recovery
+  copy - a crash in between duplicates, never loses). A `migratedTo` profile is
+  never restored, never migrated again and is off the boards; an empty guest
+  profile is not migrated; a lost insert race loads the winner.
+- Sign-in / sign-out mid-session is a MESSAGE on the live session, never a
+  reconnect: autosaves blocked while switching, the profile being LEFT saved
+  from live state, the new one applied through the same service order as
+  `onJoin`, pending grants applied, player placed at spawn, saved. If storage
+  fails mid-switch the session stays on its current profile; only the newest
+  login counts (one arriving mid-switch is queued).
+- `npm run verify:persistence` spawns the BUILT server with only the verify
+  URL stubbed (`node --import scripts/support/bloxity-verify-stub.mjs`), joins
+  with real colyseus.js clients and reads storage directly - JSON always,
+  MongoDB with `PERSISTENCE_MONGO_HARNESS=scripts/support/mongod-harness.mjs`
+  (real mongod, outage tests). The cosmetic `legionUserId` is never a storage
+  key.
 - **Identity is re-sent whenever it differs from what the ROOM has**, never
   gated on the account id changing: the SDK announces one login more than once
   (restored, then refreshed from its API) and a login can land after the join,
@@ -568,7 +613,9 @@ and auras multiply trophy rewards.
 Milestone 8 (durable persistence and treadmills) is complete.
 
 Profiles are written behind a `PersistenceAdapter`: Bloxity's managed MongoDB
-in production (see Architecture rules), and in development a single JSON file
+in production (see Architecture rules) - progress does NOT reset on a deploy,
+a restart or scale-to-zero, and a signed-in player's profile follows their
+verified Bloxity account across devices - and in development a single JSON file
 under `server/data/`, written debounced and ATOMICALLY - temp file, fsynced,
 then renamed - so a crash mid-write cannot corrupt a save. The
 room also autosaves every connected player every 15s, because Speed accrues
@@ -615,9 +662,9 @@ The temporary test floor is gone.
 monetization, final VFX, audio.
 
 `ProfileStore` stays a process-wide singleton because a room dies with its last
-client, but it is now a CACHE in front of a durable adapter rather than the
-only copy. Two tabs in one browser still share a `playerId`, and therefore one
-profile.
+client, but it is only a CACHE for the boards in front of a durable adapter;
+progress-deciding reads go to storage. Two tabs in one browser still share a
+guest `playerId`, and therefore one guest profile.
 
 The level cap is `PROGRESSION.baseLevelCap`; rebirth will raise it. Boots will
 multiply Speed per step - that hook belongs in `SpeedService`, nowhere else.

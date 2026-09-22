@@ -61,6 +61,7 @@ npm run build:shared
 | `npm start`              | Runs the compiled server from `server/dist`           |
 | `npm run inspect:fbx`    | Dumps bones, meshes and texture paths from player.fbx |
 | `npm run verify:assets`  | Checks the player assets are present and unmodified   |
+| `npm run verify:persistence` | Account/guest persistence + Bux grants against the built server |
 
 Environment variables: `PORT`, `HOST`, `MONGODB_URI`, `OBBY_DATA_DIR`, `BLOXITY_GAME_SLUG`
 and `BLOXITY_WEBHOOK_SECRET` on the server; `VITE_SERVER_URL`, `VITE_DEBUG=1`
@@ -118,14 +119,41 @@ stores profiles there instead of on disk - the container's disk is replaced on
 every deploy and on every scale-to-zero, which is why progress used to vanish
 after an update. Nothing needs configuring. After a deploy, the server log
 should show `using Bloxity managed MongoDB (MONGODB_URI)` followed by
-`[MongoPersistence] connected to database "..."`; if it shows the JSON-file
+`[persistence/mongo] connected to database "..."`; if it shows the JSON-file
 warning instead, the variable is not reaching the pod.
 
-While the database is unreachable the server stays up but refuses joins with a
-"please try again" message (the client retries), rather than starting anyone
-from zero and later saving that zero over their progress. Each join re-reads
-that player's profile from the database, so several server instances never
-overwrite each other's saves.
+While the database is unreachable the server stays up (`/health` keeps
+answering) but refuses joins with a "please try again" message (the client
+retries), rather than starting anyone from zero and later saving that zero over
+their progress. Each join re-reads that player's profile from the database, and
+every save touches only that player's own document, so several pods never roll
+each other back. A `profiles.json` found in `OBBY_DATA_DIR` is imported into the
+database on boot, insert-only - it never replaces anything already there.
+
+**A signed-in player's progress follows their Bloxity ACCOUNT**, on every
+browser and device. The client sends the SDK's login TOKEN (never an account
+id) with the join and again whenever the login changes; the server asks Bloxity
+who it belongs to (`POST https://api.bloxity.io/v1/auth/game-token/verify`, body
+`{ gameSlug }`) and plays them on `bloxity:<account id>`. Guests keep the
+browser's localStorage id as before. An account's first verified login moves
+that browser's guest progress onto it, if the account has none yet; an account
+that already has progress is never overwritten by a browser's.
+
+The token is checked against the game's bloxity.io slug,
+**`anime-backflip-escape`** (`shared/src/config/bloxity.ts`) - NOT the hosting
+id `speed-backflip-escape`. A token is a capability for one game; verifying it
+against any other slug rejects every signed-in player, which is how progress
+stayed per-browser while the code said `1-backflip-obby-escape`.
+
+**Bux purchases** are recorded durably by the webhook (keyed by transaction id,
+so a retried webhook pays once across pods and restarts), addressed to the
+Bloxity account that paid, and handed over when that account is verified in a
+room. The four SKUs (`wins_pouch`, `wins_sack`, `wins_chest`, `wins_vault`)
+must exist in Bloxity's catalogue under `anime-backflip-escape`.
+
+`npm run verify:persistence` checks all of this against the built server with
+real clients (only Bloxity's verify URL is stubbed); see the header of
+`scripts/verify-persistence.mjs` for running it against MongoDB.
 
 ### Deploying elsewhere
 
@@ -175,6 +203,7 @@ server/               Colyseus + TypeScript
   src/config/         serverConfig
   src/movement/       MovementService (authoritative simulation)
   src/persistence/    PersistenceAdapter (the boundary), JsonFilePersistence,
+                      MongoPersistence, Bux grant stores,
                       createPersistence (the only place naming an adapter)
   src/progression/    ProgressionService, TrophyService, SpeedService,
                       BootService, RebirthService, TreadmillService,
@@ -555,10 +584,11 @@ Both live in `client/src/config/assets.ts` and
   the longer falls the gorge will provide.
 - **`green.png` is a stand-in.** It is a plausible 64×64 atlas for this model but
   is not confirmed to be the original `test.png`. UVs land on sensible regions.
-- **Persistence is a single JSON file.** Durable across restarts and good
-  enough for development, but it is one process writing one file — not a
-  database, and not safe to run two server processes against.
-- **Two tabs in one browser share a `playerId`**, and therefore one profile.
+- **The JSON store is for development only.** One process writing one file -
+  not safe to run two server processes against. Deployed pods use MongoDB.
+- **Two tabs in one browser share a guest `playerId`**, and therefore one guest
+  profile. The same account in two sessions at once shares one profile, and
+  the most recent save wins.
 - **Input is sent at 60 msg/s per player.** The server advances only by the
   inputs it receives, so nothing is throttled; at the 24-player room cap that
   is ~1,440 msg/s. Batching several steps per message would cut it.

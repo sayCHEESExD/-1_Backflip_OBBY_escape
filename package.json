@@ -23,7 +23,8 @@
     "typecheck": "npm run build:shared && npm run typecheck --workspaces --if-present",
     "start": "npm run start --workspace @obby/server",
     "inspect:fbx": "node scripts/inspect-fbx.mjs assets/player/player.fbx",
-    "verify:assets": "node scripts/verify-assets.mjs"
+    "verify:assets": "node scripts/verify-assets.mjs",
+    "verify:persistence": "npm run build:server && node scripts/verify-persistence.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

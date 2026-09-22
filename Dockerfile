@@ -66,12 +66,15 @@ COPY --from=build /app/server/dist ./server/dist
 # redeploy. Set explicitly rather than left to the default `data/` beside the
 # server, so the path does not depend on the working directory.
 #
-# ON BLOXITY HOSTING THIS DIRECTORY IS NOT USED. Pods scale to zero and every
-# deploy replaces them, so nothing written here survives an update - which is
-# exactly how progress used to vanish. Bloxity injects MONGODB_URI (a managed
-# database for this game and channel) and the server stores profiles THERE
-# whenever it is set; the boot log reads `using Bloxity managed MongoDB`.
-# /data remains only as the JSON fallback for hosts without a database.
+# ON BLOXITY HOSTING THIS DIRECTORY IS NOT USED FOR LIVE DATA. Pods scale to
+# zero and every deploy replaces them, so nothing written here survives an
+# update. Bloxity injects MONGODB_URI (a managed database for this game and
+# channel) and the server keeps profiles AND pending Bux purchases THERE; the
+# boot log reads `using Bloxity managed MongoDB`. Progress does NOT reset on a
+# deploy or scale-to-zero, and a signed-in player's profile is keyed by their
+# verified Bloxity account, so it is the same on every device. A profiles.json
+# found here is imported into the database on boot, insert-only. /data is
+# otherwise only the JSON fallback for hosts without a database.
 ENV OBBY_DATA_DIR=/data
 VOLUME ["/data"]
 

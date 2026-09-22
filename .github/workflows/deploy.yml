@@ -52,12 +52,13 @@ env:
   # This game carries three names on purpose, and they are keyed by different
   # systems - do not collapse them:
   #
-  #   "+1 Speed Backflip Escape"  human-facing game name
+  #   "+1 Anime Backflip Escape"  human-facing game name
   #   speed-backflip-escape       Bloxity hosting game id - this value
-  #   1-backflip-obby-escape      Bloxity SDK gameSlug - client/src/bloxity/
-  #
-  # The original name was already taken on Bloxity, so the public name changed
-  # while the SDK slug stayed put rather than orphaning the catalog entry.
+  #   anime-backflip-escape       Bloxity game slug (bloxity.io/g/<slug>) -
+  #                               shared/src/config/bloxity.ts. The SDK is
+  #                               initialised with it and the SERVER verifies
+  #                               login tokens against it; any other value
+  #                               rejects every signed-in player as a guest.
   BLOXITY_GAME_ID: speed-backflip-escape
 
   # The repository is named "-1_Backflip_OBBY_escape", and a Docker reference
@@ -245,11 +246,11 @@ jobs:
           npm run build:client
 
           # The SDK gameSlug is compiled into the bundle from
-          # client/src/bloxity/bloxityConfig.ts and is NOT the hosting game id.
+          # shared/src/config/bloxity.ts and is NOT the hosting game id.
           # Asserted here because the two are easy to confuse and a wrong slug
           # silently breaks login, friends and Bux while the game still runs.
-          grep -rqF '1-backflip-obby-escape' client/dist/assets \
-            || { echo "::error::SDK gameSlug 1-backflip-obby-escape is missing from the bundle."; exit 1; }
+          grep -rqF 'anime-backflip-escape' client/dist/assets \
+            || { echo "::error::SDK gameSlug anime-backflip-escape is missing from the bundle."; exit 1; }
           echo "SDK gameSlug confirmed in the bundle."
 
       - name: Check the build against the 12 MB budget

@@ -7,6 +7,7 @@
  */
 
 import {
+  BLOXITY_GAME_SLUG,
   DEFAULT_AVATAR_PROPORTIONS,
   clampAvatarProportions,
   AVATAR_PROPORTION_KEYS,
@@ -17,12 +18,14 @@ import {
 import type { LegionProportions } from './sdkTypes.js';
 
 /**
- * The slug this game is registered under on bloxity.io.
+ * The slug this game is registered under on bloxity.io (its /g/<slug> page).
  *
  * Always passed to `init`, even embedded, where the portal would supply it -
- * standalone hosting and every Bux purchase resolve their catalog by it.
+ * standalone hosting and every Bux purchase resolve their catalog by it. From
+ * shared config, because the server verifies login tokens against the SAME
+ * slug; the two disagreeing is what kept every signed-in player a guest.
  */
-export const GAME_SLUG = '1-backflip-obby-escape';
+export const GAME_SLUG = BLOXITY_GAME_SLUG;
 
 /**
  * Optional portal and API overrides, for local development only.

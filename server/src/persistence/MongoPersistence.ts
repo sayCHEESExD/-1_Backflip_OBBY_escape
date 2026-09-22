@@ -1,106 +1,140 @@
-import { MongoClient, MongoServerError, type AnyBulkWriteOperation, type Collection } from 'mongodb';
+import { existsSync, readFileSync } from 'node:fs';
+import { MongoServerError, type AnyBulkWriteOperation, type Collection } from 'mongodb';
 import { logger } from '../util/logger.js';
-import { sanitiseProfile, type PersistenceAdapter, type StoredProfile } from './PersistenceAdapter.js';
+import type { MongoConnection } from './mongoConnection.js';
+import type { PersistenceAdapter, StoredProfile } from './PersistenceAdapter.js';
+import { decodeProfile } from './profileCodec.js';
+import { profileUpdate, writeProfileFields } from './profileFields.js';
 
-const SCOPE = 'MongoPersistence';
+const SCOPE = 'persistence/mongo';
 
-/** How often queued saves are written, and the longest a retry waits. */
-const WRITE_INTERVAL_MS = 500;
-const MAX_RETRY_MS = 15_000;
-
-/** How long a shutdown waits for pending saves before giving up. */
-const FLUSH_TIMEOUT_MS = 8_000;
-
-/** MongoDB's duplicate-key error: the document already exists. */
+/** The collection every profile lives in, one document per key. */
+const COLLECTION = 'profiles';
+/** Retry spacing for writes that did not land, doubling up to the cap. */
+const RETRY_MIN_MS = 1000;
+const RETRY_MAX_MS = 30_000;
+/** MongoDB's duplicate-key error: the document an insert wanted already exists. */
 const DUPLICATE_KEY = 11000;
 
-/** One stored profile. `_id` is the player's id. */
-interface ProfileDocument extends StoredProfile {
+interface ProfileDocument extends Partial<StoredProfile> {
   _id: string;
-  updatedAt: Date;
+  [field: string]: unknown;
 }
 
 /**
- * Profiles in Bloxity's managed MongoDB - the production store.
+ * Profiles in the managed MongoDB that Bloxity Legion provides.
  *
- * Bloxity Hosting injects `MONGODB_URI` into every backend pod: an isolated
- * database for this game and channel that survives deploys, restarts and
- * scale-to-zero, which the container's own disk does not. That is the whole
- * reason this adapter exists.
+ * From hosting.bloxity.io/docs: Legion injects `MONGODB_URI`, "an ISOLATED
+ * managed Mongo db scoped to THIS game+channel". There is no Bloxity database
+ * API - the contract is "read MONGODB_URI and connect" - so this is the
+ * official driver and the database named in the URI.
  *
- * Writes are queued per player (only the newest snapshot matters) and flushed
- * in one bulk write every half second. Each is an idempotent upsert of the
- * whole profile, so a batch that fails is simply retried with backoff - a
- * brief database outage delays saves, it never drops them. Reads throw when
- * the database is unreachable, so the caller can refuse a join instead of
- * starting someone from zero and later saving that zero over their progress.
+ * ONE DOCUMENT PER PLAYER, and every write touches only its own document.
+ *
+ * WRITES ARE NEVER DROPPED. `put` queues the latest snapshot per key and a
+ * drain loop writes the queue with idempotent upserts; a write that fails is
+ * put back and retried with backoff for as long as the process lives.
  */
 export class MongoPersistence implements PersistenceAdapter {
-  readonly name = 'mongodb';
+  readonly kind = 'mongodb';
 
-  private readonly client: MongoClient;
   private collection: Collection<ProfileDocument> | null = null;
-  private connecting: Promise<Collection<ProfileDocument>> | null = null;
+  /** Latest unwritten snapshot per key. A newer save replaces an older one. */
+  private readonly queue = new Map<string, StoredProfile>();
+  /** Writes on the wire right now - still the newest truth for reads. */
+  private readonly inFlight = new Map<string, StoredProfile>();
+  private readonly waiters = new Map<string, Array<() => void>>();
+  private draining: Promise<void> | null = null;
+  private retryTimer: NodeJS.Timeout | null = null;
+  private retryDelay = RETRY_MIN_MS;
+  private imported = false;
 
-  /** Newest unsaved snapshot per player. */
-  private readonly pending = new Map<string, StoredProfile>();
-  /**
-   * The batch being written right now. Out of `pending` but not yet in the
-   * database, so reads must see it too - a join landing mid-write would
-   * otherwise restore the older stored copy.
-   */
-  private inFlight = new Map<string, StoredProfile>();
-  private timer: NodeJS.Timeout | null = null;
-  private writing: Promise<void> | null = null;
-  private retryMs = WRITE_INTERVAL_MS;
+  constructor(
+    private readonly connection: MongoConnection,
+    /** A `profiles.json` from before this adapter, imported insert-only. */
+    private readonly legacyFile: string | null,
+  ) {}
 
-  constructor(uri: string) {
-    this.client = new MongoClient(uri, {
-      serverSelectionTimeoutMS: 5_000,
-      connectTimeoutMS: 5_000,
-      appName: 'speed-backflip-escape',
-    });
+  get pendingWrites(): number {
+    return this.queue.size + this.inFlight.size;
   }
 
-  async open(): Promise<ReadonlyMap<string, StoredProfile>> {
+  /**
+   * Connect, and bring across any profiles from the old JSON file.
+   *
+   * The import only ever INSERTS: `$setOnInsert` under an upsert writes a
+   * document that does not exist and leaves one that does exactly as it is.
+   * Safe on every boot; the database always wins over the file.
+   */
+  async prepare(): Promise<void> {
+    const collection = await this.connect();
+    if (this.imported || !this.legacyFile || !existsSync(this.legacyFile)) return;
+
+    let raw: unknown;
+    try {
+      raw = JSON.parse(readFileSync(this.legacyFile, 'utf8'));
+    } catch (error) {
+      logger.error(SCOPE, `legacy ${this.legacyFile} is unreadable; not importing it:`, error);
+      this.imported = true;
+      return;
+    }
+    const operations: AnyBulkWriteOperation<ProfileDocument>[] = [];
+    for (const [key, value] of Object.entries(legacyProfiles(raw))) {
+      const profile = decodeProfile(value);
+      if (!key || !profile) continue;
+      operations.push({
+        updateOne: { filter: { _id: key }, update: { $setOnInsert: { ...profile } }, upsert: true },
+      });
+    }
+    if (operations.length > 0) {
+      const result = await collection.bulkWrite(operations, { ordered: false });
+      logger.info(
+        SCOPE,
+        `legacy import from ${this.legacyFile}: ${result.upsertedCount} new, ` +
+          `${operations.length - result.upsertedCount} already present (left untouched)`,
+      );
+    }
+    this.imported = true;
+  }
+
+  async loadAll(): Promise<Map<string, StoredProfile>> {
     const collection = await this.connect();
     const profiles = new Map<string, StoredProfile>();
-    for await (const doc of collection.find({})) {
-      profiles.set(doc._id, sanitiseProfile(doc));
+    for (const document of await collection.find({}).toArray()) {
+      const profile = decodeProfile(document);
+      if (profile) profiles.set(document._id, profile);
     }
-    // Saves still queued are newer than anything in the database; a periodic
-    // reload must never show (or hand back) the older stored copy instead.
-    for (const [playerId, profile] of this.inFlight) profiles.set(playerId, { ...profile });
-    for (const [playerId, profile] of this.pending) profiles.set(playerId, { ...profile });
-    logger.info(SCOPE, `loaded ${profiles.size} profiles`);
+    // Writes still pending in THIS process are newer than the database.
+    for (const [key, profile] of [...this.inFlight, ...this.queue]) {
+      profiles.set(key, writeProfileFields(profiles.get(key), profile));
+    }
     return profiles;
   }
 
-  async get(playerId: string): Promise<StoredProfile | null> {
-    // A save still queued here is newer than anything in the database.
-    const queued = this.pending.get(playerId) ?? this.inFlight.get(playerId);
-    if (queued) return { ...queued };
+  async get(key: string): Promise<StoredProfile | undefined> {
     const collection = await this.connect();
-    const doc = await collection.findOne({ _id: playerId });
-    return doc ? sanitiseProfile(doc) : null;
+    const document = await collection.findOne({ _id: key });
+    let profile = document ? (decodeProfile(document) ?? undefined) : undefined;
+    // Read-your-own-writes: a save still pending here is the newest truth.
+    const inFlight = this.inFlight.get(key);
+    if (inFlight) profile = writeProfileFields(profile, inFlight);
+    const queued = this.queue.get(key);
+    if (queued) profile = writeProfileFields(profile, queued);
+    return profile;
   }
 
-  put(playerId: string, profile: StoredProfile): void {
-    if (!playerId) return;
-    this.pending.set(playerId, { ...profile });
-    this.schedule(WRITE_INTERVAL_MS);
+  put(key: string, profile: StoredProfile): void {
+    if (!key) return;
+    this.queue.set(key, { ...profile });
+    this.kick();
   }
 
-  async insertIfAbsent(playerId: string, profile: StoredProfile): Promise<boolean> {
-    // A profile queued or being written in this process already EXISTS.
-    if (!playerId || this.pending.has(playerId) || this.inFlight.has(playerId)) return false;
+  async insertIfAbsent(key: string, profile: StoredProfile): Promise<boolean> {
+    // A profile pending in this process but not yet written still EXISTS.
+    if (!key || this.queue.has(key) || this.inFlight.has(key)) return false;
     const collection = await this.connect();
     try {
-      await collection.insertOne({
-        ...sanitiseProfile(profile),
-        _id: playerId,
-        updatedAt: new Date(),
-      });
+      await collection.insertOne({ ...profile, _id: key });
       return true;
     } catch (error: unknown) {
       if (error instanceof MongoServerError && error.code === DUPLICATE_KEY) return false;
@@ -108,117 +142,117 @@ export class MongoPersistence implements PersistenceAdapter {
     }
   }
 
-  async flush(): Promise<void> {
-    const deadline = Date.now() + FLUSH_TIMEOUT_MS;
-    while (this.pending.size > 0 || this.writing) {
-      if (Date.now() > deadline) {
-        logger.error(SCOPE, `flush timed out with ${this.pending.size} profile(s) unsaved`);
-        return;
+  whenWritten(key: string): Promise<void> {
+    if (!this.queue.has(key) && !this.inFlight.has(key)) return Promise.resolve();
+    return new Promise((resolve) => {
+      const list = this.waiters.get(key) ?? [];
+      list.push(resolve);
+      this.waiters.set(key, list);
+    });
+  }
+
+  async flush(timeoutMs = 8000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (this.pendingWrites > 0 && Date.now() < deadline) {
+      if (this.retryTimer) {
+        clearTimeout(this.retryTimer);
+        this.retryTimer = null;
       }
-      if (this.timer) {
-        clearTimeout(this.timer);
-        this.timer = null;
-      }
-      await (this.writing ?? this.write());
-      if (this.pending.size > 0) await new Promise((resolve) => setTimeout(resolve, 250));
+      this.kick();
+      if (this.draining) await this.draining;
+      if (this.pendingWrites > 0) await sleep(Math.min(250, Math.max(0, deadline - Date.now())));
+    }
+    if (this.pendingWrites > 0) {
+      logger.error(SCOPE, `flush gave up with ${this.pendingWrites} profile write(s) unwritten`);
     }
   }
 
   async close(): Promise<void> {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
-    await this.client.close().catch(() => undefined);
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    await this.connection.close();
   }
 
-  // --- internals --------------------------------------------------------
-
-  /** Connect once; a failed attempt is forgotten so the next call retries. */
-  private connect(): Promise<Collection<ProfileDocument>> {
-    if (this.collection) return Promise.resolve(this.collection);
-    this.connecting ??= this.client
-      .connect()
-      .then(async (client) => {
-        // The URI names this game's own database; `db()` with no argument
-        // uses exactly that one.
-        const db = client.db();
-        const collection = db.collection<ProfileDocument>('profiles');
-        this.collection = collection;
-        logger.info(SCOPE, `connected to database "${db.databaseName}"`);
-        return collection;
-      })
-      .catch((error: unknown) => {
-        this.connecting = null;
-        throw error;
-      });
-    return this.connecting;
+  private async connect(): Promise<Collection<ProfileDocument>> {
+    if (this.collection) return this.collection;
+    const database = await this.connection.db();
+    this.collection = database.collection<ProfileDocument>(COLLECTION);
+    return this.collection;
   }
 
-  private schedule(delayMs: number): void {
-    if (this.timer || this.writing) return;
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      void this.write();
-    }, delayMs);
-    // Queued saves must never hold the process open on their own.
-    this.timer.unref?.();
+  /** Release everyone waiting on a key that has nothing left to write. */
+  private settle(key: string): void {
+    if (this.queue.has(key) || this.inFlight.has(key)) return;
+    const list = this.waiters.get(key);
+    if (!list) return;
+    this.waiters.delete(key);
+    for (const resolve of list) resolve();
   }
 
-  /** Write every queued snapshot in one bulk upsert. */
-  private write(): Promise<void> {
-    if (this.writing) return this.writing;
-    if (this.pending.size === 0) return Promise.resolve();
+  private kick(): void {
+    if (this.draining || this.retryTimer) return;
+    this.draining = this.drain().finally(() => {
+      this.draining = null;
+    });
+  }
 
-    const batch = new Map(this.pending);
-    this.pending.clear();
-    this.inFlight = batch;
-
-    this.writing = (async () => {
+  private async drain(): Promise<void> {
+    while (this.queue.size > 0) {
+      const batch = [...this.queue.entries()];
+      for (const [key, profile] of batch) {
+        this.queue.delete(key);
+        this.inFlight.set(key, profile);
+      }
       try {
         const collection = await this.connect();
-        const now = new Date();
-        const operations: AnyBulkWriteOperation<ProfileDocument>[] = [...batch].map(
-          ([playerId, profile]) => ({
-            updateOne: {
-              filter: { _id: playerId },
-              update: withMarkers(sanitiseProfile(profile), now),
-              upsert: true,
-            },
-          }),
+        await collection.bulkWrite(
+          batch.map(([key, profile]) => ({
+            updateOne: { filter: { _id: key }, update: profileUpdate(profile), upsert: true },
+          })),
+          { ordered: false },
         );
-        await collection.bulkWrite(operations, { ordered: false });
-        this.retryMs = WRITE_INTERVAL_MS;
-      } catch (error: unknown) {
-        // Put the batch back UNDER anything newer queued meanwhile, then retry.
-        for (const [playerId, profile] of batch) {
-          if (!this.pending.has(playerId)) this.pending.set(playerId, profile);
+        this.retryDelay = RETRY_MIN_MS;
+        for (const [key] of batch) {
+          this.inFlight.delete(key);
+          this.settle(key);
         }
-        this.retryMs = Math.min(this.retryMs * 2, MAX_RETRY_MS);
-        logger.warn(
+      } catch (error: unknown) {
+        // Put back everything a newer save has not already replaced, and try
+        // again later. Idempotent upserts make a repeat harmless.
+        for (const [key, profile] of batch) {
+          this.inFlight.delete(key);
+          if (!this.queue.has(key)) this.queue.set(key, profile);
+        }
+        logger.error(
           SCOPE,
-          `save of ${batch.size} profile(s) failed - retrying in ${this.retryMs}ms`,
+          `write of ${batch.length} profile(s) failed; retrying in ${this.retryDelay} ms:`,
           error instanceof Error ? error.message : error,
         );
-      } finally {
-        this.inFlight = new Map();
-        this.writing = null;
-        if (this.pending.size > 0) this.schedule(this.retryMs);
+        const delay = this.retryDelay;
+        this.retryDelay = Math.min(this.retryDelay * 2, RETRY_MAX_MS);
+        this.retryTimer = setTimeout(() => {
+          this.retryTimer = null;
+          this.kick();
+        }, delay);
+        this.retryTimer.unref?.();
+        return;
       }
-    })();
-    return this.writing;
+    }
   }
 }
 
 /**
- * A whole-profile upsert. The migration markers are UNSET when the snapshot
- * does not carry them: `$set` alone would leave a stale `migratedTo` on a
- * guest profile that is being played again, hiding its new progress.
+ * The profiles in a legacy JSON file: this game's `{ version, profiles }`
+ * shape, or a plain `{ key: profile }` map.
  */
-const withMarkers = (profile: StoredProfile, now: Date): Record<string, unknown> => {
-  const unset: Record<string, ''> = {};
-  if (profile.migratedTo === undefined) unset['migratedTo'] = '';
-  if (profile.migratedFrom === undefined) unset['migratedFrom'] = '';
-  return {
-    $set: { ...profile, updatedAt: now },
-    ...(Object.keys(unset).length > 0 ? { $unset: unset } : {}),
-  };
+const legacyProfiles = (raw: unknown): Record<string, unknown> => {
+  if (!raw || typeof raw !== 'object') return {};
+  const wrapped = (raw as { profiles?: unknown }).profiles;
+  if (wrapped && typeof wrapped === 'object') return wrapped as Record<string, unknown>;
+  return raw as Record<string, unknown>;
 };
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });

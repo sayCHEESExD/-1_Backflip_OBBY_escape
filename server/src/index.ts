@@ -4,23 +4,26 @@ import { ROOM_NAME } from '@obby/shared';
 import { serverConfig } from './config/serverConfig.js';
 import { createHttpServer } from './httpServer.js';
 import { BuxFulfilmentService } from './progression/BuxFulfilmentService.js';
+import { buxGrants } from './progression/BuxGrants.js';
 import { profileStore } from './progression/ProfileStore.js';
 import { GorgeRoom } from './rooms/GorgeRoom.js';
 import { logger } from './util/logger.js';
 
 const SCOPE = 'server';
 
-// Read persisted profiles in the BACKGROUND, retrying until the store answers.
-// The server listens at once so the host's health check passes; joins wait in
-// `GorgeRoom.onAuth` until this is done, so nobody starts from an empty store.
+// Prepare storage in the BACKGROUND, retrying until it answers. The server
+// listens at once so the host's health check keeps passing even with the
+// database down; each join reads storage itself in `GorgeRoom.onAuth` and is
+// refused cleanly - never started fresh - while it cannot.
 void profileStore.open();
+void buxGrants.open();
 
 // Colyseus attaches to OUR http server rather than making its own, so the
 // same port answers both the WebSocket upgrade and a plain /health probe -
 // which is what a managed host polls to decide the service is up.
 // The one place a Bux purchase becomes Wins. It lives beside the store rather
 // than inside a room because a purchase can land while the buyer is offline.
-const buxFulfilment = new BuxFulfilmentService(profileStore, serverConfig.gameSlug);
+const buxFulfilment = new BuxFulfilmentService(serverConfig.gameSlug);
 
 const gameServer = new Server({
   transport: new WebSocketTransport({ server: createHttpServer(buxFulfilment) }),
@@ -60,8 +63,10 @@ const shutdown = (signal: string): void => {
     } catch (error: unknown) {
       logger.error(SCOPE, 'room shutdown failed', error);
     }
-    // ...and this waits for those saves to be written before exiting.
+    // ...this waits for every save to be written...
     await profileStore.flush();
+    // ...so the grants those saves paid can be confirmed before exiting.
+    await buxGrants.close();
     await profileStore.close();
     logger.info(SCOPE, `profiles persisted (${profileStore.size})`);
     process.exit(0);

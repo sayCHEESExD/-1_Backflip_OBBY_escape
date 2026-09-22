@@ -4,15 +4,13 @@
  * Everything above this interface deals in whole profiles and never knows how
  * or where they are stored. Two adapters exist: Bloxity's managed MongoDB in
  * production (`MONGODB_URI`), and a JSON file for local development.
+ * `createPersistence` is the ONLY place that names a concrete one.
  *
  * The container's own disk is NOT durable on Bloxity Hosting - a deploy
  * replaces the container and an idle game scales to zero - which is why a
  * JSON file there lost every player's progress on each update.
- *
- * Reads that DECIDE a player's progress go through `get`, fresh from the
- * store, at join time: several server instances can run at once, so a copy
- * cached at boot may be older than what another instance has since saved.
  */
+
 /** The earned progression that outlives a session. */
 export interface StoredProfile {
   totalSpeed: number;
@@ -28,97 +26,80 @@ export interface StoredProfile {
    * The player's Bloxity display name and avatar.
    *
    * Stored, not just replicated, because the global leaderboards rank every
-   * profile this server has ever seen - including players who are OFFLINE and
-   * have no live state to read a name from. Absent in saves written before
-   * identities existed, so both default to empty on read.
+   * profile - including players who are OFFLINE and have no live state to
+   * read a name from. Cosmetic: nothing is keyed on either.
    */
   legionName: string;
   legionPfp: string;
   /**
-   * On a GUEST profile whose progress was moved onto a Bloxity account at
-   * that account's first verified login: the account key it went to. A
-   * profile carrying this is a tombstone - never restored, ranked or moved
-   * again - so one browser's progress cannot be played or migrated twice.
+   * On a GUEST profile: the account key this browser's progress was moved to
+   * at that account's first verified login. The data is KEPT as a recovery
+   * copy, but it is nobody's live profile any more: a guest joining under
+   * this id starts fresh, it is never migrated a second time (which would let
+   * one browser seed progress into many accounts), and it is off the boards.
    */
   migratedTo?: string;
-  /** On an ACCOUNT profile created by that move: the guest key it came from. */
+  /** On an ACCOUNT profile: the guest key its first progress came from. */
   migratedFrom?: string;
-}
-
-export interface PersistenceAdapter {
-  /** Identifies the backing store in logs. */
-  readonly name: string;
-
   /**
-   * Prepare the store and return everything it holds.
+   * The most recent Bux transaction ids whose Wins are IN this profile.
    *
-   * Used to seed the global leaderboards, which rank players who are offline.
-   * REJECTS when the store is unreachable - the caller retries rather than
-   * starting from an empty map that saves would then write over.
+   * Written in the same save as the Wins, so the two are durable together or
+   * not at all. It is what lets a process decide, after another one died
+   * holding a claimed grant, whether that grant reached the player.
    */
-  open(): Promise<ReadonlyMap<string, StoredProfile>>;
-
-  /**
-   * One player's stored profile, read fresh. Null when they have none.
-   * REJECTS when the store is unreachable, so a join can be refused rather
-   * than starting that player from zero and saving the zero over their save.
-   */
-  get(playerId: string): Promise<StoredProfile | null>;
-
-  /**
-   * Record one profile. Written behind and retried until it lands; callers
-   * rely on `flush` for durability at shutdown.
-   */
-  put(playerId: string, profile: StoredProfile): void;
-
-  /**
-   * Store a profile ONLY if none exists under this key yet.
-   *
-   * The guarantee a first-login migration rests on: if another session or
-   * server created the account's profile a moment ago, this refuses rather
-   * than replacing it. Resolves true when this call created it. REJECTS when
-   * the store is unreachable.
-   */
-  insertIfAbsent(playerId: string, profile: StoredProfile): Promise<boolean>;
-
-  /** Write everything pending. Resolves once it is durable (or gives up). */
-  flush(): Promise<void>;
-
-  /**
-   * Best-effort synchronous flush for the process `exit` hook, where nothing
-   * asynchronous can run. Only a local file can honour it.
-   */
-  flushSync?(): void;
-
-  /** Release connections at shutdown. */
-  close?(): Promise<void>;
+  buxApplied?: string[];
+  /** Wall clock of the last save. Newer wins when the boards' cache refreshes. */
+  updatedAt: number;
 }
-
-const finite = (value: unknown, fallback: number): number =>
-  typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 
 /**
- * Coerce a stored record into a valid profile.
+ * Where profiles live.
  *
- * Every adapter reads through this, so a field added later simply defaults on
- * old records, and a hand-edited or partial record cannot put an unbounded
- * string on another player's scoreboard or a negative count into a wallet.
+ * PER KEY, one document per player. Several pods can run this game against
+ * one database, so nothing may write back a whole-map snapshot: a pod doing
+ * that would roll back every player another pod had saved since.
+ *
+ * ERRORS ARE NOT "NOT FOUND". `get` resolves `undefined` only when storage
+ * answered and has no such profile; if storage could not answer it THROWS. A
+ * caller that treated a failed read as a new player would start them from
+ * nothing and then save nothing over everything they had.
  */
-export const sanitiseProfile = (raw: Partial<Record<keyof StoredProfile, unknown>> | null | undefined): StoredProfile => ({
-  totalSpeed: Math.max(0, finite(raw?.totalSpeed, 0)),
-  wins: Math.max(0, Math.floor(finite(raw?.wins, 0))),
-  rebirths: Math.max(0, Math.floor(finite(raw?.rebirths, 0))),
-  ownedBoots: Math.max(0, Math.floor(finite(raw?.ownedBoots, 1))),
-  ownedTrails: Math.max(0, Math.floor(finite(raw?.ownedTrails, 0))),
-  trailSlot: Math.max(0, Math.floor(finite(raw?.trailSlot, 0))),
-  ownedAuras: Math.max(0, Math.floor(finite(raw?.ownedAuras, 0))),
-  auraSlot: Math.max(0, Math.floor(finite(raw?.auraSlot, 0))),
-  legionName: typeof raw?.legionName === 'string' ? raw.legionName.slice(0, 32) : '',
-  legionPfp: typeof raw?.legionPfp === 'string' ? raw.legionPfp.slice(0, 600) : '',
-  ...(typeof raw?.migratedTo === 'string' && raw.migratedTo
-    ? { migratedTo: raw.migratedTo.slice(0, 200) }
-    : {}),
-  ...(typeof raw?.migratedFrom === 'string' && raw.migratedFrom
-    ? { migratedFrom: raw.migratedFrom.slice(0, 200) }
-    : {}),
-});
+export interface PersistenceAdapter {
+  /** Identifies the backing store in logs. */
+  readonly kind: string;
+  /**
+   * Connect and do any one-off preparation, such as importing an older store.
+   * Called at boot, and again until it succeeds. Throws if unreachable.
+   */
+  prepare?(): Promise<void>;
+  /** Every profile, for the boards. Throws if storage cannot be read. */
+  loadAll(): Promise<Map<string, StoredProfile>>;
+  /** One profile, `undefined` if there is none. Throws if storage cannot be read. */
+  get(key: string): Promise<StoredProfile | undefined>;
+  /**
+   * Durably write one profile. Queued and retried until it lands: a write that
+   * fails is kept and tried again, never dropped. Fields this build does not
+   * know about are PRESERVED.
+   */
+  put(key: string, profile: StoredProfile): void;
+  /**
+   * Create a profile only if none exists under `key`. Resolves `true` if it was
+   * created, `false` if one was already there - the guarantee the first-login
+   * migration rests on. Throws if storage cannot answer.
+   */
+  insertIfAbsent(key: string, profile: StoredProfile): Promise<boolean>;
+  /**
+   * Resolves once every write queued for `key` SO FAR has landed. A write that
+   * is failing keeps it waiting - it never resolves on a write that was lost.
+   */
+  whenWritten(key: string): Promise<void>;
+  /** Make every queued write durable, or give up after `timeoutMs`. */
+  flush(timeoutMs?: number): Promise<void>;
+  /** Best-effort synchronous flush for the process `exit` hook (file only). */
+  flushSync?(): void;
+  /** Writes still waiting to land, for shutdown logging. */
+  readonly pendingWrites: number;
+  /** Release connections. Called last on shutdown. */
+  close?(): Promise<void>;
+}

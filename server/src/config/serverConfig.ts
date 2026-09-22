@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import { DEFAULT_SERVER_PORT, SERVER_TICK_RATE } from '@obby/shared';
+import { BLOXITY_GAME_SLUG, DEFAULT_SERVER_PORT, SERVER_TICK_RATE } from '@obby/shared';
 
 /** Runtime server configuration, overridable by environment variables. */
 export interface ServerConfig {
@@ -16,7 +16,11 @@ export interface ServerConfig {
    * that survives a deploy. Empty in local development.
    */
   readonly mongoUri: string;
-  /** The slug this game is registered under on bloxity.io. */
+  /**
+   * The slug this game is registered under on bloxity.io (its /g/<slug> page).
+   * Login tokens are verified against it and purchases carry it. NOT the
+   * hosting app id Legion injects as BLOXITY_GAME_ID - they differ here.
+   */
   readonly gameSlug: string;
   /**
    * Shared secret on Bloxity's purchase webhook.
@@ -41,7 +45,7 @@ export const serverConfig: ServerConfig = {
   // Relative to the server package, which is the working directory for both
   // `npm run dev` and `npm start`, so a restart finds the same file either way.
   dataDir: resolve(process.env['OBBY_DATA_DIR'] ?? 'data'),
-  mongoUri: process.env['MONGODB_URI'] ?? '',
-  gameSlug: process.env['BLOXITY_GAME_SLUG'] ?? '1-backflip-obby-escape',
+  mongoUri: process.env['MONGODB_URI']?.trim() ?? '',
+  gameSlug: process.env['BLOXITY_GAME_SLUG']?.trim() || BLOXITY_GAME_SLUG,
   bloxityWebhookSecret: process.env['BLOXITY_WEBHOOK_SECRET'] ?? '',
 };

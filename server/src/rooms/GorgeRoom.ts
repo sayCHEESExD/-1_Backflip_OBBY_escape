@@ -30,6 +30,7 @@ import { AURA_BINDING, TRAIL_BINDING } from '../progression/cosmeticBindings.js'
 import { bloxityAuth } from '../bloxity/BloxityAuth.js';
 import { guestKeyFrom, profileStore, type Profile, type Resolution } from '../progression/ProfileStore.js';
 import { creditWins } from '@obby/shared';
+import { buxGrants } from '../progression/BuxGrants.js';
 import { LeaderboardService, type RankedSource } from '../progression/LeaderboardService.js';
 import { ProgressionService } from '../progression/ProgressionService.js';
 import { RebirthService } from '../progression/RebirthService.js';
@@ -42,8 +43,12 @@ import { PlayerState } from './state/PlayerState.js';
 
 const SCOPE = 'GorgeRoom';
 
-/** How long a join waits for storage to come up before it is refused. */
-const JOIN_STORAGE_WAIT_MS = 8_000;
+/**
+ * Seconds between checks for Bux purchases owed to verified players here.
+ * A purchase recorded by THIS process is handed over at once instead
+ * (`buxGrants.localVersion`); the poll catches one delivered to another pod.
+ */
+const GRANT_POLL_SECONDS = 3;
 
 /**
  * When Bloxity could not be ASKED about a login (timeout, 5xx), the player
@@ -189,8 +194,12 @@ export class GorgeRoom extends Room<GorgeState> {
   /** Seconds since the boards were last rebuilt. */
   private leaderboardTimer = 0;
 
-  /** Stops the purchase-credit subscription. Null before `onCreate`. */
-  private stopCreditWatch: (() => void) | null = null;
+  /** Seconds since verified players were last checked for owed purchases. */
+  private grantPollTimer = 0;
+  private grantPolling = false;
+  private grantVersionSeen = -1;
+  /** Sessions whose grants are being handed over right now. */
+  private readonly granting = new Set<string>();
 
   override onCreate(): void {
     this.state = new GorgeState();
@@ -267,14 +276,6 @@ export class GorgeRoom extends Room<GorgeState> {
       this.handleEquipCosmetic(client, this.auras, message?.slot);
     });
 
-    // A Bux purchase credits the stored profile from outside any room. If the
-    // buyer happens to be playing here, their live Wins have to move too - the
-    // next autosave writes that figure back over the profile, so crediting
-    // only one of the two would quietly undo the purchase.
-    this.stopCreditWatch = this.profiles.onCredit((playerId, amount) => {
-      this.applyPurchasedWins(playerId, amount);
-    });
-
     // Populate the boards before the first player can look at them.
     this.refreshLeaderboards();
 
@@ -301,9 +302,6 @@ export class GorgeRoom extends Room<GorgeState> {
     _client: Client,
     options?: { playerId?: string; bloxityToken?: string },
   ): Promise<SessionAuth> {
-    if (!(await this.profiles.whenReady(JOIN_STORAGE_WAIT_MS))) {
-      throw new ServerError(503, 'Saved progress is still loading - please try again');
-    }
     const guestKey = guestKeyFrom(options?.playerId);
     const token = typeof options?.bloxityToken === 'string' ? options.bloxityToken : '';
     const verdict = token ? await bloxityAuth.verify(token) : null;
@@ -376,6 +374,9 @@ export class GorgeRoom extends Room<GorgeState> {
         `(${resolution?.migrated ? 'migrated' : resolution?.profile ? 'restored' : 'new'}) ` +
         `level=${player.level} rebirths=${player.rebirths} wins=${player.wins}`,
     );
+
+    // Anything bought while they were away, or recorded on another pod.
+    if (auth?.accountId) void this.applyGrants(client.sessionId);
 
     // Bloxity did not answer about this login: play as a guest for now, and
     // ask again shortly rather than leaving a signed-in player a guest.
@@ -456,7 +457,6 @@ export class GorgeRoom extends Room<GorgeState> {
       // Save the profile being LEFT - unless it was just moved, in which case
       // the store already wrote it and marked it.
       if (currentKey && !resolution.migrated) this.profiles.save(currentKey, player);
-      if (currentKey) this.profiles.release(currentKey);
 
       if (accountId) this.accountIds.set(sessionId, accountId);
       else this.accountIds.delete(sessionId);
@@ -475,6 +475,8 @@ export class GorgeRoom extends Room<GorgeState> {
       this.switching.delete(sessionId);
       // Written at once, so a crash straight after a sign-in cannot lose it.
       this.persist(sessionId, player);
+      // Purchases waiting for the account just signed in to.
+      if (accountId) void this.applyGrants(sessionId);
       logger.info(
         SCOPE,
         `${sessionId} is now ${accountId ? 'signed in' : 'a guest'} ` +
@@ -514,13 +516,13 @@ export class GorgeRoom extends Room<GorgeState> {
     const playerId = this.playerIds.get(client.sessionId);
     if (leaving && playerId) {
       this.profiles.save(playerId, leaving);
-      this.profiles.release(playerId);
     }
     this.playerIds.delete(client.sessionId);
     this.guestKeys.delete(client.sessionId);
     this.accountIds.delete(client.sessionId);
     this.switching.delete(client.sessionId);
     this.queuedTokens.delete(client.sessionId);
+    this.granting.delete(client.sessionId);
 
     this.state.players.delete(client.sessionId);
     this.movement.forget(client.sessionId);
@@ -537,26 +539,72 @@ export class GorgeRoom extends Room<GorgeState> {
   }
 
   override onDispose(): void {
-    this.stopCreditWatch?.();
-    this.stopCreditWatch = null;
     logger.info(SCOPE, `disposed roomId=${this.roomId}`);
   }
 
   /**
-   * Mirror a purchase onto the player's live state, if they are in this room.
+   * Hand over every Bux purchase waiting for this session's VERIFIED account.
    *
-   * The grant itself already happened in `BuxFulfilmentService`; this only
-   * keeps the replicated figure in step with it, using the same overflow guard
-   * so the two can never disagree about what the balance is.
+   * Claimed atomically (no other pod can take the same grant), credited onto
+   * the live Wins with the uint32 guard, saved WITH the transaction ids in the
+   * same write, and marked applied only once that write lands. Nothing a
+   * browser supplied is involved - only the account Bloxity vouched for.
    */
-  private applyPurchasedWins(playerId: string, amount: number): void {
-    for (const [sessionId, id] of this.playerIds) {
-      if (id !== playerId) continue;
+  private async applyGrants(sessionId: string): Promise<void> {
+    const accountId = this.accountIds.get(sessionId);
+    if (!accountId || this.granting.has(sessionId) || this.switching.has(sessionId)) return;
+    this.granting.add(sessionId);
+    try {
+      let grants: Awaited<ReturnType<typeof buxGrants.claim>>;
+      try {
+        grants = await buxGrants.claim(accountId);
+      } catch (error: unknown) {
+        logger.warn(SCOPE, `${sessionId}: could not claim purchases; will retry: ${String(error)}`);
+        return;
+      }
+      if (grants.length === 0) return;
+
       const player = this.state.players.get(sessionId);
-      if (!player) continue;
-      player.wins = creditWins(player.wins, amount);
-      logger.info(SCOPE, `purchase applied live sessionId=${sessionId} wins=${player.wins}`);
-      return;
+      const key = this.playerIds.get(sessionId);
+      // Gone, switched account or mid-switch while claiming: not theirs to pay here.
+      if (!player || !key || this.accountIds.get(sessionId) !== accountId || this.switching.has(sessionId)) {
+        await buxGrants.release(grants);
+        return;
+      }
+
+      let total = 0;
+      for (const grant of grants) total += grant.wins;
+      player.wins = creditWins(player.wins, total);
+      this.profiles.save(
+        key,
+        player,
+        grants.map((grant) => grant.transactionId),
+      );
+      buxGrants.confirm(key, grants);
+      logger.info(
+        SCOPE,
+        `purchases applied sessionId=${sessionId} +${total} wins -> ${player.wins} ` +
+          `[${grants.map((grant) => grant.transactionId).join(', ')}]`,
+      );
+    } finally {
+      this.granting.delete(sessionId);
+    }
+  }
+
+  /** Check every verified player here for purchases owed - one query per room. */
+  private async pollGrants(): Promise<void> {
+    const bySession = [...this.accountIds.entries()];
+    if (bySession.length === 0) return;
+    this.grantPolling = true;
+    try {
+      const owed = await buxGrants.owed(bySession.map(([, accountId]) => accountId));
+      for (const [sessionId, accountId] of bySession) {
+        if (owed.has(accountId)) void this.applyGrants(sessionId);
+      }
+    } catch (error: unknown) {
+      logger.warn(SCOPE, `purchase poll failed; will retry: ${String(error)}`);
+    } finally {
+      this.grantPolling = false;
     }
   }
 
@@ -837,6 +885,16 @@ export class GorgeRoom extends Room<GorgeState> {
     if (this.autosaveTimer >= AUTOSAVE_SECONDS) {
       this.autosaveTimer = 0;
       this.state.players.forEach((player, sessionId) => this.persist(sessionId, player));
+    }
+
+    this.grantPollTimer += deltaMs / 1000;
+    if (
+      !this.grantPolling &&
+      (this.grantPollTimer >= GRANT_POLL_SECONDS || buxGrants.localVersion !== this.grantVersionSeen)
+    ) {
+      this.grantPollTimer = 0;
+      this.grantVersionSeen = buxGrants.localVersion;
+      void this.pollGrants();
     }
 
     this.leaderboardTimer += deltaMs / 1000;

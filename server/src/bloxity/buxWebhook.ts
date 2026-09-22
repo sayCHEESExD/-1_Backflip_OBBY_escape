@@ -64,8 +64,9 @@ export const handleBuxWebhook = (
         return;
       }
 
-      // Awaited: 200 is only sent once the credit is durable. If storage is
-      // unreachable this throws, and the 5xx below makes Bloxity retry.
+      // Awaited: 200 is only sent once the grant is durably recorded. If
+      // storage is unreachable this throws, and the 5xx below makes Bloxity
+      // retry rather than refund.
       const outcome = await fulfilment.fulfil(payload);
       if (outcome.status === 'rejected') {
         // A 4xx here is deliberate: the sale cannot be honoured, so the
@@ -75,12 +76,11 @@ export const handleBuxWebhook = (
         return;
       }
 
+      // 200 only now: the grant is DURABLY recorded (or was already).
       send(res, 200, {
         status: outcome.status,
-        playerId: outcome.playerId,
-        ...(outcome.status === 'granted'
-          ? { wins: outcome.wins, balance: outcome.balance }
-          : {}),
+        userId: outcome.userId,
+        ...(outcome.status === 'granted' ? { wins: outcome.wins } : {}),
       });
     })
     .catch((error: unknown) => {

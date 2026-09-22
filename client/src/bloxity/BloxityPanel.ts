@@ -1,5 +1,4 @@
 import { BUX_PRODUCTS } from '@obby/shared';
-import { getPlayerId } from '../net/NetworkClient.js';
 import { modalLayer } from '../ui/ModalLayer.js';
 import { logger } from '../util/logger.js';
 import { resolvePfpUrl } from './bloxityConfig.js';
@@ -444,12 +443,9 @@ export class BloxityPanel {
       row.appendChild(
         button('Buy', 'primary', async () => {
           this.say(`Opening checkout for ${product.name}…`);
-          const result = await bloxity.requestPurchase(product.sku, {
-            // The game's own profile key, so the fulfilment webhook knows
-            // whose Wins to credit. Not the identity being charged - the
-            // portal owns that.
-            playerId: getPlayerId(),
-          });
+          // No metadata: the webhook credits the Bloxity ACCOUNT that paid,
+          // never an id this browser supplies.
+          const result = await bloxity.requestPurchase(product.sku);
           if (!result.success) {
             this.say(result.error ? `Purchase failed: ${result.error}` : 'Purchase cancelled.');
             return;
