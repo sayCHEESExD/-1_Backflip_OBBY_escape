@@ -369,7 +369,7 @@ export class Game {
 
     // The MOUSE aims the camera, and the camera defines forward. Nothing the
     // player presses rotates the view.
-    this.camera.setOrbit(this.input.look.yaw, this.input.look.pitch);
+    this.camera.setOrbit(this.input.look.yaw, this.input.look.pitch, this.input.look.distance);
 
     if (player) {
       // Camera-relative movement: W is whichever way the camera is facing.

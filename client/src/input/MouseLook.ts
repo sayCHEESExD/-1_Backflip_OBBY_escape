@@ -1,3 +1,14 @@
+import { CAMERA } from '@obby/shared';
+
+/**
+ * Zoom per wheel notch, as a distance multiplier. Multiplicative so a notch
+ * feels the same close in as far out.
+ */
+const ZOOM_PER_NOTCH = 1.12;
+
+/** Wheel pixels in one notch, for devices that report pixels (most mice). */
+const PIXELS_PER_NOTCH = 100;
+
 /** Radians of rotation per pixel of mouse movement. */
 const SENSITIVITY = 0.0026;
 
@@ -50,6 +61,8 @@ export class MouseLook {
 
   private yawValue = 0;
   private pitchValue = 0.22;
+  /** Camera distance chosen with the wheel; the default until it is used. */
+  private distanceValue = CAMERA.distance;
   private suppressed = false;
   /** True while the left button is down and the pointer is NOT locked. */
   private dragging = false;
@@ -102,6 +115,11 @@ export class MouseLook {
     return this.pitchValue;
   }
 
+  /** Orbit distance chosen with the mouse wheel, within the camera limits. */
+  get distance(): number {
+    return this.distanceValue;
+  }
+
   /** True while the browser has the pointer captured. */
   get locked(): boolean {
     return !!this.canvas && document.pointerLockElement === this.canvas;
@@ -122,6 +140,10 @@ export class MouseLook {
   attach(canvas: HTMLElement): void {
     this.canvas = canvas;
     canvas.addEventListener('mousedown', this.onMouseDown);
+    // On the CANVAS, like the click: panels are DOM above it, so a wheel over
+    // a shop scrolls the shop and never reaches the camera. Not passive, so
+    // a wheel over the world cannot also scroll an embedding page.
+    canvas.addEventListener('wheel', this.onWheel, { passive: false });
     window.addEventListener('mouseup', this.onMouseUp);
     window.addEventListener('mousemove', this.onMouseMove);
     window.addEventListener('blur', this.onBlur);
@@ -131,6 +153,7 @@ export class MouseLook {
 
   detach(): void {
     this.canvas?.removeEventListener('mousedown', this.onMouseDown);
+    this.canvas?.removeEventListener('wheel', this.onWheel);
     window.removeEventListener('mouseup', this.onMouseUp);
     window.removeEventListener('mousemove', this.onMouseMove);
     window.removeEventListener('blur', this.onBlur);
@@ -337,6 +360,30 @@ export class MouseLook {
           ? MAX_PITCH
           : this.pitchValue;
   }
+
+  /**
+   * Mouse wheel: up zooms in, down zooms out, clamped to the camera limits.
+   *
+   * Ignored while a panel is up, exactly like looking - the menu owns the
+   * screen and its own scrolling.
+   */
+  private readonly onWheel = (event: WheelEvent): void => {
+    if (this.suppressed) return;
+    if (!Number.isFinite(event.deltaY) || event.deltaY === 0) return;
+    event.preventDefault();
+
+    // Normalise to notches: pixel-mode wheels report ~100 per notch, line
+    // mode ~3 lines, page mode one page.
+    const notches =
+      event.deltaMode === WheelEvent.DOM_DELTA_PIXEL
+        ? event.deltaY / PIXELS_PER_NOTCH
+        : event.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? event.deltaY / 3
+          : Math.sign(event.deltaY);
+
+    const next = this.distanceValue * ZOOM_PER_NOTCH ** notches;
+    this.distanceValue = Math.min(Math.max(next, CAMERA.minDistance), CAMERA.maxDistance);
+  };
 
   private readonly onBlur = (): void => {
     this.dragging = false;

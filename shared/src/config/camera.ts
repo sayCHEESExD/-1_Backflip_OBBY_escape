@@ -3,8 +3,11 @@
  * reason about camera framing without importing the renderer.
  */
 export interface CameraConfig {
-  /** Distance behind the player, in world units. */
+  /** Distance behind the player, in world units - the default framing. */
   readonly distance: number;
+  /** Closest and farthest the mouse wheel may zoom the camera. */
+  readonly minDistance: number;
+  readonly maxDistance: number;
   /** Height above the player's feet that the camera sits at. */
   readonly height: number;
   /** Height above the player's feet that the camera looks at. */
@@ -24,6 +27,8 @@ export interface CameraConfig {
  */
 export const CAMERA: CameraConfig = {
   distance: 13.5,
+  minDistance: 6,
+  maxDistance: 22,
   height: 7,
   lookAtHeight: 3.4,
   followLerp: 7,

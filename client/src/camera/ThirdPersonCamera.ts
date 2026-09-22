@@ -16,6 +16,9 @@ const RESPAWN_ZOOM_DISTANCE = 9;
 /** How fast that extra distance is given up. Higher is snappier. */
 const RESPAWN_ZOOM_RATE = 6.5;
 
+/** How fast the camera eases to a wheel-zoom distance. Higher is snappier. */
+const WHEEL_ZOOM_RATE = 12;
+
 const FORWARD = new Vector3();
 const LOOK_TARGET = new Vector3();
 const OFFSET = new Vector3();
@@ -45,6 +48,9 @@ export class ThirdPersonCamera {
   private initialised = false;
   /** Extra distance still to be given up by the respawn dolly. */
   private zoomOffset = 0;
+  /** Orbit distance: eased toward `targetDistance`, set by the wheel. */
+  private orbitDistance = CAMERA.distance;
+  private targetDistance = CAMERA.distance;
 
   constructor() {
     this.camera = new PerspectiveCamera(CAMERA.fov, 1, CAMERA.near, CAMERA.far);
@@ -86,10 +92,18 @@ export class ThirdPersonCamera {
     this.zoomOffset = zoomIn ? RESPAWN_ZOOM_DISTANCE : 0;
   }
 
-  /** Aim the orbit. Called every frame from the mouse look source. */
-  setOrbit(yaw: number, pitch: number): void {
+  /**
+   * Aim the orbit. Called every frame from the mouse look source.
+   *
+   * @param distance how far out to orbit, from the mouse wheel. Clamped to the
+   *                 camera limits; omitted, the default framing.
+   */
+  setOrbit(yaw: number, pitch: number, distance: number = CAMERA.distance): void {
     this.orbitYaw = yaw;
     this.orbitPitch = pitch;
+    this.targetDistance = Number.isFinite(distance)
+      ? Math.min(Math.max(distance, CAMERA.minDistance), CAMERA.maxDistance)
+      : CAMERA.distance;
   }
 
   update(delta: number): void {
@@ -115,7 +129,13 @@ export class ThirdPersonCamera {
       this.zoomOffset *= Math.exp(-RESPAWN_ZOOM_RATE * delta);
       if (this.zoomOffset < 0.01) this.zoomOffset = 0;
     }
-    const distance = CAMERA.distance + this.zoomOffset;
+    // Ease to the wheel's distance so a notch glides rather than jumps.
+    this.orbitDistance +=
+      (this.targetDistance - this.orbitDistance) * (1 - Math.exp(-WHEEL_ZOOM_RATE * delta));
+    const distance = this.orbitDistance + this.zoomOffset;
+    // The lift scales with the zoom so zooming keeps the same angle onto the
+    // player; at the default distance it is exactly `CAMERA.height`.
+    const height = CAMERA.height * (this.orbitDistance / CAMERA.distance);
 
     // Where the camera sits: back along its own yaw, lifted by its pitch. The
     // pitch shortens the horizontal reach as it rises, so the camera swings
@@ -130,7 +150,7 @@ export class ThirdPersonCamera {
     this.camera.position
       .copy(this.followed)
       .addScaledVector(FORWARD, -distance)
-      .add(OFFSET.set(0, CAMERA.height + sinPitch * distance, 0));
+      .add(OFFSET.set(0, height + sinPitch * distance, 0));
 
     LOOK_TARGET.copy(this.followed).add(OFFSET.set(0, CAMERA.lookAtHeight, 0));
     this.camera.lookAt(LOOK_TARGET);
